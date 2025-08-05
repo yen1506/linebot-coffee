@@ -5,6 +5,7 @@ from linebot.models import MessageEvent, TextMessage, TextSendMessage
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import re
+import os
 
 app = Flask(__name__)
 
