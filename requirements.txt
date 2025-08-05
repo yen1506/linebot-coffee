@@ -1,4 +1,3 @@
-os
 flask
 line-bot-sdk
 gspread
