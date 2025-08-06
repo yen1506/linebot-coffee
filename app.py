@@ -6,6 +6,8 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import os
 import re
+from datetime import datetime
+import pytz
 
 app = Flask(__name__)
 
@@ -31,6 +33,16 @@ except:
 # 狀態記憶暫存（開發用簡易版本，實務建議使用資料庫）
 user_states = {}
 user_order_temp = {}
+
+# 台灣時區
+tz = pytz.timezone('Asia/Taipei')
+
+# 產生訂單編號
+def generate_order_id():
+    today_str = datetime.now(tz).strftime("%Y%m%d")
+    existing = [row for row in sheet.get_all_values() if row[0].startswith(f"ORD{today_str}")]
+    order_num = len(existing) + 1
+    return f"ORD{today_str}-{order_num:03}"
 
 # 解析訂單格式
 def parse_order_fields(text):
@@ -66,41 +78,66 @@ def callback():
 def handle_message(event):
     user_id = event.source.user_id
     msg = event.message.text.strip()
-
     state = user_states.get(user_id, "init")
 
     if msg == "下單":
         user_states[user_id] = "ordering"
         line_bot_api.reply_message(
             event.reply_token,
-            TextSendMessage(text="請依序輸入以下7個欄位（每行一項）：\n姓名\n電話（09xxxxxxxx）\n咖啡名稱\n樣式\n數量\n取貨日期\n取貨方式")
+            TextSendMessage(text="請依序輸入以下資訊（每項換行填寫）：\n姓名\n電話【09xxxxxxxx】\n咖啡名稱\n樣式(掛耳包或豆子)\n數量\n取貨日期【YYYYMMDD】\n取貨方式【填寫面交(限吉安花蓮市區)或郵寄地址】")
         )
         return
 
-    elif msg == "修改訂單":
-        user_states[user_id] = "editing"
-        line_bot_api.reply_message(
-            event.reply_token,
-            TextSendMessage(text="請輸入您的姓名以查詢訂單：")
-        )
-        return
+    elif msg.startswith("修改訂單"):
+        parts = msg.split()
+        if len(parts) == 2:
+            order_id = parts[1].strip()
+            records = sheet.get_all_values()
+            for idx in range(len(records)-1, 0, -1):
+                row = records[idx]
+                if row[0] == order_id:
+                    deletion_time = datetime.now(tz).strftime("%Y-%m-%d %H:%M")
+                    backup_sheet.append_row(row + [deletion_time, "使用者輸入訂單編號修改"])
+                    sheet.delete_rows(idx+1)
+                    user_states[user_id] = "ordering"
+                    line_bot_api.reply_message(
+                        event.reply_token,
+                        TextSendMessage(text=f"已刪除以下訂單（{order_id}）：\n{' / '.join(row[1:8])}\n請重新下單。")
+                    )
+                    return
+            line_bot_api.reply_message(
+                event.reply_token,
+                TextSendMessage(text="❌ 查無此訂單編號，請確認後重新輸入。")
+            )
+            return
+        else:
+            user_states[user_id] = "editing"
+            line_bot_api.reply_message(
+                event.reply_token,
+                TextSendMessage(text="請輸入您的姓名以查詢訂單：")
+            )
+            return
 
     elif state == "ordering":
         data = parse_order_fields(msg)
         if not data:
             line_bot_api.reply_message(
                 event.reply_token,
-                TextSendMessage(text="⚠️ 輸入格式錯誤，請依照每行一項重新輸入共七項資訊。")
+                TextSendMessage(text="⚠️ 輸入格式錯誤，請重新輸入資訊。")
             )
             return
+
+        timestamp = datetime.now(tz).strftime("%Y-%m-%d %H:%M")
+        order_id = generate_order_id()
         sheet.append_row([
+            order_id,
             data['name'], data['phone'], data['coffee'], data['style'],
-            data['qty'], data['date'], data['method']
+            data['qty'], data['date'], data['method'], timestamp, user_id
         ])
         user_states[user_id] = "init"
         line_bot_api.reply_message(
             event.reply_token,
-            TextSendMessage(text=f"✅ 已成功訂購：{data['coffee']} x{data['qty']}，謝謝您的購買！")
+            TextSendMessage(text=f"✅ 已成功訂購：{data['coffee']} x{data['qty']}\n📄 訂單編號：{order_id}\n謝謝您的購買！")
         )
         return
 
@@ -110,15 +147,15 @@ def handle_message(event):
         found = False
         for idx in range(len(records)-1, 0, -1):
             row = records[idx]
-            if row[0] == name:
-                # 將資料移至備份
-                backup_sheet.append_row(row)
-                # 刪除原資料列
+            if row[1] == name:
+                deletion_time = datetime.now(tz).strftime("%Y-%m-%d %H:%M")
+                backup_sheet.append_row(row + [deletion_time, "使用者輸入姓名修改"])
                 sheet.delete_rows(idx+1)
-                user_states[user_id] = "init"
+                short_row = row[1:8]
+                user_states[user_id] = "ordering"
                 line_bot_api.reply_message(
                     event.reply_token,
-                    TextSendMessage(text=f"已刪除以下訂單資料：\n{' / '.join(row)}\n請重新下單。")
+                    TextSendMessage(text=f"已刪除以下訂單資料：\n{' / '.join(short_row)}\n請重新下單。")
                 )
                 found = True
                 return
@@ -131,7 +168,7 @@ def handle_message(event):
         return
 
     else:
-        # 初始或非關鍵字訊息
-        reply = "👋 哈囉！請選擇您要執行的動作：\n➡️ 請輸入『下單』開始新訂單\n✏️ 或輸入『修改訂單』更新您的訂單"
-        line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply))
-        user_states[user_id] = "init"
+        line_bot_api.reply_message(
+            event.reply_token,
+            TextSendMessage(text="您好！請輸入指令：\n👉 輸入『下單』開始訂購\n👉 輸入『修改訂單』修改資料")
+        )
