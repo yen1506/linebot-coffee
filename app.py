@@ -1,50 +1,37 @@
 from flask import Flask, request, abort
+from datetime import datetime
+from zoneinfo import ZoneInfo
+import gspread
+from oauth2client.service_account import ServiceAccountCredentials
 from linebot import LineBotApi, WebhookHandler
 from linebot.exceptions import InvalidSignatureError
 from linebot.models import MessageEvent, TextMessage, TextSendMessage
-import gspread
-from oauth2client.service_account import ServiceAccountCredentials
 import os
 import re
-from datetime import datetime
-import pytz
 
 app = Flask(__name__)
 
-# LINE API 密鑰
-LINE_CHANNEL_ACCESS_TOKEN = os.getenv('LINE_CHANNEL_ACCESS_TOKEN')
-LINE_CHANNEL_SECRET = os.getenv('LINE_CHANNEL_SECRET')
-line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
-handler = WebhookHandler(LINE_CHANNEL_SECRET)
+line_bot_api = LineBotApi(os.getenv('LINE_CHANNEL_ACCESS_TOKEN'))
+handler = WebhookHandler(os.getenv('LINE_CHANNEL_SECRET'))
 
-# Google Sheet 初始化
-scope = ["https://spreadsheets.google.com/feeds", 'https://www.googleapis.com/auth/spreadsheets',
-         "https://www.googleapis.com/auth/drive.file", "https://www.googleapis.com/auth/drive"]
-creds = ServiceAccountCredentials.from_json_keyfile_name("/etc/secrets/coffee-bot-468008-86e28eaa87f3.json", scope)
+scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
+creds = ServiceAccountCredentials.from_json_keyfile_name('/etc/secrets/coffee-bot-468008-86e28eaa87f3.json', scope)
 client = gspread.authorize(creds)
 sheet = client.open("coffee_orders").sheet1
 
-# 建立備份工作表（若不存在會建立）
 try:
     backup_sheet = client.open("coffee_orders").worksheet("DeletedOrders")
 except:
     backup_sheet = client.open("coffee_orders").add_worksheet(title="DeletedOrders", rows="1000", cols="20")
 
-# 狀態記憶暫存（開發用簡易版本，實務建議使用資料庫）
 user_states = {}
-user_order_temp = {}
 
-# 台灣時區
-tz = pytz.timezone('Asia/Taipei')
-
-# 產生訂單編號
 def generate_order_id():
-    today_str = datetime.now(tz).strftime("%Y%m%d")
+    today_str = datetime.now(ZoneInfo("Asia/Taipei")).strftime("%Y%m%d")
     existing = [row for row in sheet.get_all_values() if row[0].startswith(f"ORD{today_str}")]
     order_num = len(existing) + 1
     return f"ORD{today_str}-{order_num:03}"
 
-# 解析訂單格式
 def parse_order_fields(text):
     parts = text.strip().split('\n')
     if len(parts) != 7:
@@ -68,10 +55,12 @@ def parse_order_fields(text):
 def callback():
     signature = request.headers['X-Line-Signature']
     body = request.get_data(as_text=True)
+
     try:
         handler.handle(body, signature)
     except InvalidSignatureError:
         abort(400)
+
     return 'OK'
 
 @handler.add(MessageEvent, message=TextMessage)
@@ -96,7 +85,7 @@ def handle_message(event):
             for idx in range(len(records)-1, 0, -1):
                 row = records[idx]
                 if row[0] == order_id:
-                    deletion_time = datetime.now(tz).strftime("%Y-%m-%d %H:%M")
+                    deletion_time = datetime.now(ZoneInfo("Asia/Taipei")).strftime("%Y-%m-%d %H:%M")
                     backup_sheet.append_row(row + [deletion_time, "使用者輸入訂單編號修改"])
                     sheet.delete_rows(idx+1)
                     user_states[user_id] = "ordering"
@@ -127,7 +116,7 @@ def handle_message(event):
             )
             return
 
-        timestamp = datetime.now(tz).strftime("%Y-%m-%d %H:%M")
+        timestamp = datetime.now(ZoneInfo("Asia/Taipei")).strftime("%Y-%m-%d %H:%M")
         order_id = generate_order_id()
         sheet.append_row([
             order_id,
@@ -148,7 +137,7 @@ def handle_message(event):
         for idx in range(len(records)-1, 0, -1):
             row = records[idx]
             if row[1] == name:
-                deletion_time = datetime.now(tz).strftime("%Y-%m-%d %H:%M")
+                deletion_time = datetime.now(ZoneInfo("Asia/Taipei")).strftime("%Y-%m-%d %H:%M")
                 backup_sheet.append_row(row + [deletion_time, "使用者輸入姓名修改"])
                 sheet.delete_rows(idx+1)
                 short_row = row[1:8]
@@ -172,3 +161,4 @@ def handle_message(event):
             event.reply_token,
             TextSendMessage(text="您好！請輸入指令：\n👉 輸入『下單』開始訂購\n👉 輸入『修改訂單』修改資料")
         )
+
