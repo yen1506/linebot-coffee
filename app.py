@@ -32,7 +32,6 @@ except:
 
 # 狀態記憶暫存（開發用簡易版本，實務建議使用資料庫）
 user_states = {}
-
 # 解析訂單格式
 def parse_order_fields(text):
     parts = text.strip().split('\n')
