@@ -177,10 +177,131 @@ def daily_pickup_reminder():
         except IndexError:
             continue
 
+# 自動填上訂單金額
+def update_prices_and_totals():
+    try:
+        # 抓取訂單清單和價格表
+        order_ws = client.open("coffee_orders").worksheet("訂單清單")
+        price_ws = client.open("coffee_orders").worksheet("價格表")
+
+        order_data = order_ws.get_all_values()
+        price_data = price_ws.get_all_values()
+
+        order_df = pd.DataFrame(order_data[1:], columns=order_data[0])
+        price_df = pd.DataFrame(price_data[1:], columns=price_data[0])
+
+        # 移除空白列（若有）
+        order_df = order_df[order_df["咖啡名稱"].notna()]
+        price_df = price_df[price_df["咖啡名稱"].notna()]
+
+        # 數量轉成數字
+        order_df["數量"] = pd.to_numeric(order_df["數量"], errors='coerce')
+
+        # 合併訂單與價格
+        merged_df = order_df.merge(price_df, how="left", on=["咖啡名稱", "掛耳包/豆子"], suffixes=('', '_價格'))
+
+        # 若原表中已有「單價」「總金額」欄位則覆蓋，沒有則新增
+        merged_df["單價"] = pd.to_numeric(merged_df["單價_價格"], errors='coerce')
+        merged_df["總金額"] = merged_df["單價"] * merged_df["數量"]
+
+        # 清理欄位順序（確保與原始順序一致）
+        final_columns = order_data[0]
+        for col in ["單價", "總金額"]:
+            if col not in final_columns:
+                final_columns.append(col)
+
+        # 依照欄位順序重新整理 DataFrame
+        merged_df = merged_df.reindex(columns=final_columns)
+
+        # 更新 Google Sheet（含標題列）
+        order_ws.update([final_columns] + merged_df.astype(str).values.tolist())
+
+        print("✅ 價格與總金額更新完成")
+    except Exception as e:
+        print(f"❌ 更新價格時發生錯誤：{e}")
+
+# 月報表
+def generate_monthly_summary():
+    try:
+        order_ws = client.open("coffee_orders").worksheet("訂單清單")
+
+        order_data = order_ws.get_all_values()
+        order_df = pd.DataFrame(order_data[1:], columns=order_data[0])
+
+        # 確保資料正確型別
+        order_df["數量"] = pd.to_numeric(order_df["數量"], errors="coerce").fillna(0)
+        order_df["單價"] = pd.to_numeric(order_df["單價"], errors="coerce").fillna(0)
+        order_df["總金額"] = pd.to_numeric(order_df["總金額"], errors="coerce").fillna(0)
+
+        # 擷取月份（預計取貨日期）
+        order_df["月份"] = pd.to_datetime(order_df["預計取貨日期"], errors="coerce").dt.to_period("M").astype(str)
+
+        # 群組統計
+        summary_df = order_df.groupby(["月份", "咖啡名稱", "掛耳包/豆子", "單價"], as_index=False).agg({
+            "數量": "sum",
+            "總金額": "sum"
+        })
+
+        # 欄位排序
+        summary_df = summary_df[["月份", "咖啡名稱", "掛耳包/豆子", "單價", "數量", "總金額"]]
+
+        # 建立 / 更新「每月統計」工作表
+        try:
+            summary_ws = client.open("coffee_orders").worksheet("每月統計")
+        except:
+            summary_ws = client.open("coffee_orders").add_worksheet(title="每月統計", rows="1000", cols="10")
+
+        # 寫入統計資料
+        summary_ws.clear()
+        summary_ws.update([summary_df.columns.tolist()] + summary_df.astype(str).values.tolist())
+
+        print("✅ 每月統計已更新")
+    except Exception as e:
+        print(f"❌ 無法產生統計：{e}")
+
+# 顧客購買分析
+def generate_customer_summary():
+    try:
+        order_ws = client.open("coffee_orders").worksheet("訂單清單")
+
+        order_data = order_ws.get_all_values()
+        order_df = pd.DataFrame(order_data[1:], columns=order_data[0])
+
+        # 確保欄位格式正確
+        order_df["數量"] = pd.to_numeric(order_df["數量"], errors="coerce").fillna(0)
+        order_df["總金額"] = pd.to_numeric(order_df["總金額"], errors="coerce").fillna(0)
+
+        # 統計：依姓名 + 咖啡名稱 + 樣式 群組
+        customer_df = order_df.groupby(["姓名", "咖啡名稱", "掛耳包/豆子"], as_index=False).agg({
+            "數量": "count",    # 購買次數（筆數）
+            "總金額": "sum"
+        })
+
+        # 欄位名稱調整
+        customer_df.rename(columns={"數量": "購買次數"}, inplace=True)
+        customer_df = customer_df[["姓名", "咖啡名稱", "掛耳包/豆子", "購買次數", "總金額"]]
+
+        # 建立 / 更新「客群統計」工作表
+        try:
+            customer_ws = client.open("coffee_orders").worksheet("客群統計")
+        except:
+            customer_ws = client.open("coffee_orders").add_worksheet(title="客群統計", rows="1000", cols="10")
+
+        customer_ws.clear()
+        customer_ws.update([customer_df.columns.tolist()] + customer_df.astype(str).values.tolist())
+
+        print("✅ 客群統計已更新")
+    except Exception as e:
+        print(f"❌ 無法產生客群統計：{e}")
+
+
 # 啟用每日排程（早上 8 點）
 scheduler = BackgroundScheduler()
 scheduler.add_job(daily_pickup_reminder, 'cron', hour=8, minute=0)
 scheduler.start()
 
 if __name__ == "__main__":
+    update_prices_and_totals()
+    generate_monthly_summary()
+    generate_customer_summary()
     app.run()
