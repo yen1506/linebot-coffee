@@ -33,9 +33,9 @@ sheet = client.open("coffee_orders").sheet1
 
 # 建立備份工作表（若不存在會新增）
 try:
-    backup_sheet = client.open("coffee_orders").worksheet("DeletedOrders")
+    backup_sheet = client.open("coffee_orders").worksheet("已取消訂單")
 except:
-    backup_sheet = client.open("coffee_orders").add_worksheet(title="DeletedOrders", rows="1000", cols="20")
+    backup_sheet = client.open("coffee_orders").add_worksheet(title="已取消訂單", rows="1000", cols="20")
 
 # 使用者狀態記憶（簡單版）
 user_states = {}
