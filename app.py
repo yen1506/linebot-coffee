@@ -152,12 +152,12 @@ def handle_message(event):
 
         for idx in range(len(records) - 1, 0, -1):
             row = records[idx]
-            if query == row[0] or query == row[1]:
+            if query == row[0]:
                 backup_sheet.append_row(row)
                 sheet.delete_rows(idx + 1)
 
                 user_states[user_id] = "confirm_reorder"
-                visible_fields = [f"{h}: {v}" for h, v in zip(headers, row) if v]
+                visible_fields = [f"{h}: {v}" for h, v in zip(headers, row) if h != "顧客編號" and v]
                 reply_text = "✅ 找到並刪除以下訂單：\n" + "\n".join(visible_fields) + \
                              "\n\n❓請問是否要重新下單？請輸入『是』或『否』"
                 line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
