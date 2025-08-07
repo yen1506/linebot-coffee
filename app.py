@@ -81,7 +81,7 @@ def handle_message(event):
         user_states[user_id] = "ordering"
         line_bot_api.reply_message(
             event.reply_token,
-            TextSendMessage(text="請依序輸入以下資料（換行填寫）：\n姓名\n電話\n咖啡品名(請先確認現有販售品項)\n樣式(掛耳包/豆子)\n數量(包)\n取貨日期（格式：YYYYMMDD）\n取貨方式(面交或填入郵寄地址)")
+            TextSendMessage(text="請依序輸入以下資料（換行填寫，毋需複製名稱）：\n姓名\n電話\n咖啡品名【請先確認現有販售品項】\n樣式【掛耳包/豆子】\n數量【填入阿拉伯數字】\n取貨日期【格式：YYYYMMDD】\n取貨方式【面交或填入郵寄地址】")
         )
         return
 
@@ -89,7 +89,7 @@ def handle_message(event):
         user_states[user_id] = "editing"
         line_bot_api.reply_message(
             event.reply_token,
-            TextSendMessage(text="請輸入您的『姓名』或『訂單編號』以查詢訂單：")
+            TextSendMessage(text="請輸入您的『訂單編號』以查詢訂單：")
         )
         return
 
@@ -98,7 +98,7 @@ def handle_message(event):
         if not data:
             line_bot_api.reply_message(
                 event.reply_token,
-                TextSendMessage(text="⚠️ 輸入格式錯誤，請重新填入資訊:\n姓名\n電話\n咖啡品名(請先確認現有販售品項)\n樣式(掛耳包/豆子)\n數量(包)\n取貨日期（格式：YYYYMMDD）\n取貨方式(面交或填入郵寄地址)")
+                TextSendMessage(text="⚠️ 輸入格式錯誤，請重新填入以下資料（換行填寫，毋需複製名稱）：\n姓名\n電話\n咖啡品名【請先確認現有販售品項】\n樣式【掛耳包/豆子】\n數量【填入阿拉伯數字】\n取貨日期【格式：YYYYMMDD】\n取貨方式【面交或填入郵寄地址】")
             )
             return
 
@@ -137,7 +137,7 @@ def handle_message(event):
             user_states[user_id] = "ordering"
             line_bot_api.reply_message(
                 event.reply_token,
-                TextSendMessage(text="請再次輸入以下資訊（換行填寫）：\n姓名\n電話\n咖啡品名(請先確認現有販售品項)\n樣式(掛耳包/豆子)\n數量(包)\n取貨日期（格式：YYYYMMDD）\n取貨方式(面交或填入郵寄地址)")
+                TextSendMessage(text="請再次輸入以下資料（換行填寫，毋需複製名稱）：\n姓名\n電話\n咖啡品名【請先確認現有販售品項】\n樣式【掛耳包/豆子】\n數量【填入阿拉伯數字】\n取貨日期【格式：YYYYMMDD】\n取貨方式【面交或填入郵寄地址】")
             )
         else:
             user_states[user_id] = "init"
@@ -174,7 +174,7 @@ def handle_message(event):
             user_states[user_id] = "ordering"
             line_bot_api.reply_message(
                 event.reply_token,
-                TextSendMessage(text="請再次輸入以下資訊（換行填寫）：\n姓名\n電話\n咖啡品名(請先確認現有販售品項)\n樣式(掛耳包/豆子)\n數量(包)\n取貨日期（格式：YYYYMMDD）\n取貨方式(面交或填入郵寄地址)")
+                TextSendMessage(text="請再次輸入以下資料（換行填寫，毋需複製名稱）：\n姓名\n電話\n咖啡品名【請先確認現有販售品項】\n樣式【掛耳包/豆子】\n數量【填入阿拉伯數字】\n取貨日期【格式：YYYYMMDD】\n取貨方式【面交或填入郵寄地址】")
             )
         else:
             user_states[user_id] = "init"
