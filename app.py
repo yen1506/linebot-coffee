@@ -71,6 +71,7 @@ def callback():
     return 'OK'
 
 @handler.add(MessageEvent, message=TextMessage)
+@handler.add(MessageEvent, message=TextMessage)
 def handle_message(event):
     user_id = event.source.user_id
     msg = event.message.text.strip()
@@ -101,7 +102,7 @@ def handle_message(event):
             )
             return
 
-        # 處理日期格式轉換（YYYYMMDD → %Y-%m-%d）
+        # 日期格式處理
         try:
             pickup_date = datetime.strptime(data['date'], "%Y%m%d")
             formatted_pickup_date = pickup_date.strftime("%Y-%m-%d")
@@ -115,7 +116,7 @@ def handle_message(event):
         order_time = (datetime.utcnow() + timedelta(hours=8)).strftime('%Y-%m-%d %H:%M')
         order_id = str(uuid.uuid4())[:8]
 
-        # 寫入 Google Sheet（含 user_id）
+        # 寫入 Google Sheet
         sheet.append_row([
             order_id, data['name'], data['phone'], data['coffee'], data['style'],
             data['qty'], formatted_pickup_date, data['method'], order_time, user_id
@@ -125,9 +126,22 @@ def handle_message(event):
         today_str = (datetime.utcnow() + timedelta(hours=8)).strftime('%Y-%m-%d')
         if formatted_pickup_date == today_str:
             reply_text += "\n⚠️ 溫馨提醒：您今天需取貨！"
+        reply_text += "\n\n❓是否還要繼續下單？請輸入『是』或『否』"
 
+        user_states[user_id] = "confirm_continue"
         line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
-        user_states[user_id] = "init"
+        return
+
+    elif state == "confirm_continue":
+        if msg == "是":
+            user_states[user_id] = "ordering"
+            line_bot_api.reply_message(
+                event.reply_token,
+                TextSendMessage(text="請再次輸入以下7個欄位（每行一項）：\n姓名\n電話\n咖啡名稱\n樣式\n數量\n取貨日期（YYYYMMDD）\n取貨方式")
+            )
+        else:
+            user_states[user_id] = "init"
+            line_bot_api.reply_message(event.reply_token, TextSendMessage(text="☕ 期待下次光臨！"))
         return
 
     elif state == "editing":
@@ -142,10 +156,10 @@ def handle_message(event):
                 backup_sheet.append_row(row)
                 sheet.delete_rows(idx + 1)
 
-                user_states[user_id] = "ordering"
+                user_states[user_id] = "confirm_reorder"
                 visible_fields = [f"{h}: {v}" for h, v in zip(headers, row) if v]
-                reply_text = "✅ 找到並刪除以下訂單，請重新下單：\n" + "\n".join(visible_fields) + \
-                             "\n\n請重新輸入7欄位資訊（不含訂單編號與送單時間）"
+                reply_text = "✅ 找到並刪除以下訂單：\n" + "\n".join(visible_fields) + \
+                             "\n\n❓請問是否要重新下單？請輸入『是』或『否』"
                 line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
                 found = True
                 return
@@ -153,6 +167,18 @@ def handle_message(event):
         if not found:
             user_states[user_id] = "init"
             line_bot_api.reply_message(event.reply_token, TextSendMessage(text="❌ 查無符合的訂單編號或姓名，請再確認。"))
+        return
+
+    elif state == "confirm_reorder":
+        if msg == "是":
+            user_states[user_id] = "ordering"
+            line_bot_api.reply_message(
+                event.reply_token,
+                TextSendMessage(text="請重新輸入7個欄位（每行一項）：\n姓名\n電話\n咖啡名稱\n樣式\n數量\n取貨日期\n取貨方式")
+            )
+        else:
+            user_states[user_id] = "init"
+            line_bot_api.reply_message(event.reply_token, TextSendMessage(text="☕ 期待下次光臨！"))
         return
 
     else:
