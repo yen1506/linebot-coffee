@@ -81,11 +81,11 @@ def handle_message(event):
         user_states[user_id] = "ordering"
         line_bot_api.reply_message(
             event.reply_token,
-            TextSendMessage(text="請依序輸入以下資料（換行填寫，毋需複製名稱）：\n姓名\n電話\n咖啡品名【請先確認現有販售品項】\n樣式【掛耳包/豆子】\n數量【填入阿拉伯數字】\n取貨日期【格式：YYYYMMDD】\n取貨方式【面交或填入郵寄地址】")
+            TextSendMessage(text="請依序輸入以下資料（換行填寫，毋需複製名稱）：\n姓名：\n電話：\n咖啡品名【請先確認現有販售品項】：\n樣式【掛耳包/豆子】：\n數量【填入阿拉伯數字】：\n取貨日期【格式：YYYYMMDD】：\n取貨方式【面交或填入郵寄地址】：")
         )
         return
 
-    elif msg == "修改訂單":
+    elif msg == "編輯訂單":
         user_states[user_id] = "editing"
         line_bot_api.reply_message(
             event.reply_token,
@@ -98,7 +98,7 @@ def handle_message(event):
         if not data:
             line_bot_api.reply_message(
                 event.reply_token,
-                TextSendMessage(text="⚠️ 輸入格式錯誤，請重新填入以下資料（換行填寫，毋需複製名稱）：\n姓名\n電話\n咖啡品名【請先確認現有販售品項】\n樣式【掛耳包/豆子】\n數量【填入阿拉伯數字】\n取貨日期【格式：YYYYMMDD】\n取貨方式【面交或填入郵寄地址】")
+                TextSendMessage(text="⚠️ 輸入格式錯誤，請重新填入以下資料（換行填寫，毋需複製名稱）：\n姓名：\n電話：\n咖啡品名【請先確認現有販售品項】：\n樣式【掛耳包/豆子】：\n數量【填入阿拉伯數字】：\n取貨日期【格式：YYYYMMDD】：\n取貨方式【面交或填入郵寄地址】：")
             )
             return
 
@@ -122,7 +122,7 @@ def handle_message(event):
             data['qty'], formatted_pickup_date, data['method'], order_time, user_id
         ])
 
-        reply_text = f"✅ 訂單已完成：{data['coffee']} x{data['qty']}\n📌 訂單編號：{order_id}"
+        reply_text = f"✅ 訂單已完成：{data['coffee']}-{data['style']}x{data['qty']}\n📌 訂單編號：{order_id}"
         today_str = (datetime.utcnow() + timedelta(hours=8)).strftime('%Y-%m-%d')
         if formatted_pickup_date == today_str:
             reply_text += "\n⚠️ 溫馨提醒：您今天需取貨！"
@@ -137,7 +137,7 @@ def handle_message(event):
             user_states[user_id] = "ordering"
             line_bot_api.reply_message(
                 event.reply_token,
-                TextSendMessage(text="請再次輸入以下資料（換行填寫，毋需複製名稱）：\n姓名\n電話\n咖啡品名【請先確認現有販售品項】\n樣式【掛耳包/豆子】\n數量【填入阿拉伯數字】\n取貨日期【格式：YYYYMMDD】\n取貨方式【面交或填入郵寄地址】")
+                TextSendMessage(text="請再次輸入以下資料（換行填寫，毋需複製名稱）：\n姓名：\n電話：\n咖啡品名【請先確認現有販售品項】：\n樣式【掛耳包/豆子】：\n數量【填入阿拉伯數字】：\n取貨日期【格式：YYYYMMDD】：\n取貨方式【面交或填入郵寄地址】：")
             )
         else:
             user_states[user_id] = "init"
@@ -158,7 +158,7 @@ def handle_message(event):
 
                 user_states[user_id] = "confirm_reorder"
                 visible_fields = [f"{h}: {v}" for h, v in zip(headers, row) if h != "顧客編號" and v]
-                reply_text = "✅ 找到並刪除以下訂單：\n" + "\n".join(visible_fields) + \
+                reply_text = "✅ 已清除以下訂單：\n" + "\n".join(visible_fields) + \
                              "\n\n❓請問是否要重新下單？請輸入『是』或『否』"
                 line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
                 found = True
@@ -166,7 +166,7 @@ def handle_message(event):
 
         if not found:
             user_states[user_id] = "init"
-            line_bot_api.reply_message(event.reply_token, TextSendMessage(text="❌ 查無符合的訂單編號或姓名，請再確認。"))
+            line_bot_api.reply_message(event.reply_token, TextSendMessage(text="❌ 查無符合的訂單編號，請再確認。"))
         return
 
     elif state == "confirm_reorder":
@@ -174,7 +174,7 @@ def handle_message(event):
             user_states[user_id] = "ordering"
             line_bot_api.reply_message(
                 event.reply_token,
-                TextSendMessage(text="請再次輸入以下資料（換行填寫，毋需複製名稱）：\n姓名\n電話\n咖啡品名【請先確認現有販售品項】\n樣式【掛耳包/豆子】\n數量【填入阿拉伯數字】\n取貨日期【格式：YYYYMMDD】\n取貨方式【面交或填入郵寄地址】")
+                TextSendMessage(text="請再次輸入以下資料（換行填寫，毋需複製名稱）：\n姓名：\n電話：\n咖啡品名【請先確認現有販售品項】：\n樣式【掛耳包/豆子】：\n數量【填入阿拉伯數字】：\n取貨日期【格式：YYYYMMDD】：\n取貨方式【面交或填入郵寄地址】：")
             )
         else:
             user_states[user_id] = "init"
@@ -184,7 +184,7 @@ def handle_message(event):
     else:
         line_bot_api.reply_message(
             event.reply_token,
-            TextSendMessage(text="👋 請輸入『下單』開始新訂單\n或輸入『修改訂單』來變更您的訂單")
+            TextSendMessage(text="👋 請輸入『下單』開始新訂單\n或輸入『編輯訂單』來變更您的訂單")
         )
         user_states[user_id] = "init"
 
