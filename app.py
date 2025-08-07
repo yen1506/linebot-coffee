@@ -299,10 +299,10 @@ def generate_customer_summary():
 # 啟用每日排程（早上 8 點）
 scheduler = BackgroundScheduler()
 scheduler.add_job(daily_pickup_reminder, 'cron', hour=8, minute=0)
+scheduler.add_job(update_prices_and_totals, 'date', run_date=datetime.now() + timedelta(seconds=5))
+scheduler.add_job(generate_monthly_summary, 'date', run_date=datetime.now() + timedelta(seconds=10))
+scheduler.add_job(generate_customer_summary, 'date', run_date=datetime.now() + timedelta(seconds=15))
 scheduler.start()
 
 if __name__ == "__main__":
-    update_prices_and_totals()
-    generate_monthly_summary()
-    generate_customer_summary()
     app.run()
