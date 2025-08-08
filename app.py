@@ -13,37 +13,70 @@ from apscheduler.schedulers.background import BackgroundScheduler
 
 app = Flask(__name__)
 
-# LINE API 設定
+# ---------- LINE 設定 ----------
 LINE_CHANNEL_ACCESS_TOKEN = os.getenv('LINE_CHANNEL_ACCESS_TOKEN')
 LINE_CHANNEL_SECRET = os.getenv('LINE_CHANNEL_SECRET')
 line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
 handler = WebhookHandler(LINE_CHANNEL_SECRET)
 
-# Google Sheets 初始化
+# ---------- Google Sheets 初始化 ----------
 scope = [
     "https://spreadsheets.google.com/feeds",
     "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/drive.file",
     "https://www.googleapis.com/auth/drive"
 ]
+# 修改這裡：確保 json 路徑正確或改用 gspread.service_account(...)
 creds = ServiceAccountCredentials.from_json_keyfile_name("/etc/secrets/coffee-bot-468008-86e28eaa87f3.json", scope)
 client = gspread.authorize(creds)
 
-# 主訂單表
-sheet = client.open("coffee_orders").worksheet("訂單清單")
+# 試算表名稱（請與你的 Google Sheets 名稱一致）
+SPREADSHEET_NAME = "coffee_orders"
 
-# 已取消訂單表
-try:
-    backup_sheet = client.open("coffee_orders").worksheet("已取消訂單")
-except:
-    backup_sheet = client.open("coffee_orders").add_worksheet(title="已取消訂單", rows="1000", cols="20")
+# 預期欄位順序（我們把付款方式放在咖啡名稱之後）
+EXPECTED_HEADERS = [
+    "訂單編號", "姓名", "咖啡名稱", "付款方式",
+    "掛耳包/豆子", "數量", "預計取貨日期", "取貨方式",
+    "備註", "下單時間", "顧客編號"
+]
 
-# 使用者狀態記憶
+# 取得 worksheet（若不存在會建立），並確保標題列
+def get_or_create_ws(title, rows=1000, cols=20):
+    try:
+        ws = client.open(SPREADSHEET_NAME).worksheet(title)
+    except Exception:
+        ws = client.open(SPREADSHEET_NAME).add_worksheet(title=title, rows=str(rows), cols=str(cols))
+    # 若 header 不存在或不一致，寫入 EXPECTED_HEADERS
+    values = ws.get_all_values()
+    if not values or values[0] != EXPECTED_HEADERS:
+        # 清空並寫入標題
+        try:
+            ws.clear()
+        except Exception:
+            pass
+        ws.update([EXPECTED_HEADERS])
+    return ws
+
+# 主訂單表與已取消表
+sheet = get_or_create_ws("訂單清單")
+backup_sheet = get_or_create_ws("已取消訂單")
+
+# ---------- 使用者狀態 ----------
+# user_states 會存放簡單狀態機；暫存訂單請放在 user_states[f"{user_id}_temp_order"]
 user_states = {}
 
-# 訂單解析（不含付款方式）
+# ---------- 訂單解析（先不含付款方式） ----------
+# 輸入為 8 行：
+# 姓名
+# 電話
+# 咖啡品名
+# 樣式（掛耳包/豆子）
+# 數量（阿拉伯數字）
+# 取貨日期（任意格式，將原文存入）
+# 取貨方式（面交 / 郵寄地址）
+# 備註（不可為空）
 def parse_order_fields(text):
-    parts = text.strip().split('\n')
+    parts = [p.strip() for p in text.strip().split('\n')]
     if len(parts) != 8:
         return None
     name, phone, coffee, style, qty, date, method, remark = parts
@@ -51,22 +84,23 @@ def parse_order_fields(text):
         return None
     if not qty.isdigit():
         return None
-    if not remark.strip():
+    if not remark:
         return None
     return {
-        "name": name.strip(),
-        "phone": phone.strip(),
-        "coffee": coffee.strip(),
-        "style": style.strip(),
+        "name": name,
+        "phone": phone,
+        "coffee": coffee,
+        "style": style,
         "qty": int(qty),
-        "date": date.strip(),  # 不驗證格式
-        "method": method.strip(),
-        "remark": remark.strip()
+        "date": date,  # 不驗證格式
+        "method": method,
+        "remark": remark
     }
 
+# ---------- Flask / LINE webhook ----------
 @app.route("/callback", methods=['POST'])
 def callback():
-    signature = request.headers['X-Line-Signature']
+    signature = request.headers.get('X-Line-Signature', '')
     body = request.get_data(as_text=True)
     try:
         handler.handle(body, signature)
@@ -80,119 +114,149 @@ def handle_message(event):
     msg = event.message.text.strip()
     state = user_states.get(user_id, "init")
 
+    # ----- waiting_payment：處理使用者輸入付款方式 -----
+    if state == "waiting_payment":
+        # 先檢查暫存訂單是否存在
+        temp = user_states.get(f"{user_id}_temp_order")
+        if not temp:
+            line_bot_api.reply_message(event.reply_token, TextSendMessage(text="⚠️ 訂單資料遺失，請重新下單。"))
+            user_states[user_id] = "init"
+            user_states.pop(f"{user_id}_temp_order", None)
+            return
+
+        # 模糊比對付款方式
+        pm = msg.replace(" ", "")
+        if "匯款" in pm:
+            payment_method = "匯款"
+        elif "付現" in pm or "現付" in pm:
+            payment_method = "付現"
+        else:
+            line_bot_api.reply_message(event.reply_token, TextSendMessage(text="❌ 付款方式請輸入『匯款』或『付現』（或包含這兩字的文字），請重新輸入。"))
+            return  # 不改變狀態，讓使用者再輸入一次
+
+        # 準備寫入欄位（按照 EXPECTED_HEADERS 順序）
+        order_id = str(uuid.uuid4())[:8]
+        order_time = (datetime.utcnow() + timedelta(hours=8)).strftime('%Y-%m-%d %H:%M')
+        row_dict = {
+            "訂單編號": order_id,
+            "姓名": temp["name"],
+            "咖啡名稱": temp["coffee"],
+            "付款方式": payment_method,
+            "掛耳包/豆子": temp["style"],
+            "數量": str(temp["qty"]),
+            "預計取貨日期": temp["date"],
+            "取貨方式": temp["method"],
+            "備註": temp["remark"],
+            "下單時間": order_time,
+            "顧客編號": user_id
+        }
+
+        # 依 header 產生 row list，並確保長度
+        headers = sheet.get_all_values()[0]
+        row = [row_dict.get(h, "") for h in headers]
+        # 寫入 Google Sheet
+        try:
+            sheet.append_row(row)
+        except Exception as e:
+            # 若寫入失敗，回覆並保留暫存讓使用者重試
+            line_bot_api.reply_message(event.reply_token, TextSendMessage(text=f"⚠️ 寫入訂單時發生錯誤，請稍後再試。錯誤：{e}"))
+            return
+
+        # 根據付款方式回覆
+        if payment_method == "付現":
+            reply_text = f"✅ 訂單已完成：{temp['coffee']} x{temp['qty']}\n📌 訂單編號：{order_id}\n於取貨時交付，謝謝購買。"
+            line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
+        else:
+            # 匯款資訊（範例，請自行修改）
+            bank_info = ("💳 匯款資訊：\n"
+                        "銀行：示範銀行\n"
+                        "分行：示範分行\n"
+                        "帳號：1234567890123\n"
+                        "戶名：示範戶名\n\n"
+                        "感謝購買！")
+            reply_messages = [
+                TextSendMessage(text=f"✅ 訂單已完成：{temp['coffee']} x{temp['qty']}\n📌 訂單編號：{order_id}"),
+                TextSendMessage(text=bank_info)
+            ]
+            line_bot_api.reply_message(event.reply_token, reply_messages)
+
+        # 清除狀態與暫存
+        user_states.pop(user_id, None)
+        user_states.pop(f"{user_id}_temp_order", None)
+        return
+
+    # ----- 使用者開始下單 -----
     if msg == "下單":
         user_states[user_id] = "ordering"
         line_bot_api.reply_message(
             event.reply_token,
-            TextSendMessage(
-                text="請依序輸入以下資料（換行填寫）\n\n"
-                     "姓名：\n電話：\n咖啡品名：\n樣式【掛耳包/豆子】：\n"
-                     "數量（數字）：\n取貨日期：\n取貨方式：\n備註："
-            )
+            TextSendMessage(text=(
+                "請依序輸入以下資料（換行填寫，務必包含備註，電話需為 09xxxxxxxx）：\n\n"
+                "姓名：\n電話：\n咖啡品名【請先確認現有販售品項】：\n樣式【掛耳包/豆子】：\n數量【填入阿拉伯數字】：\n取貨日期（任意格式）：\n取貨方式（面交或輸入郵寄地址）：\n備註（不可空）："
+            ))
         )
         return
 
-    elif msg == "編輯訂單":
+    # ----- 編輯訂單（取消/轉移到已取消訂單） -----
+    if msg == "編輯訂單":
         user_states[user_id] = "editing"
-        line_bot_api.reply_message(
-            event.reply_token,
-            TextSendMessage(text="請輸入您的『訂單編號』以查詢訂單：")
-        )
+        line_bot_api.reply_message(event.reply_token, TextSendMessage(text="請輸入您的『訂單編號』以查詢訂單："))
         return
 
-    elif state == "ordering":
+    # ----- ordering：收到 8 行下單內容 -----
+    if state == "ordering":
         data = parse_order_fields(msg)
         if not data:
             line_bot_api.reply_message(
                 event.reply_token,
-                TextSendMessage(
-                    text="⚠️ 輸入格式錯誤，請重新填入以下資料（換行填寫）\n\n"
-                         "姓名：\n電話：\n咖啡品名：\n樣式【掛耳包/豆子】：\n"
-                         "數量（數字）：\n取貨日期：\n取貨方式：\n備註："
-                )
+                TextSendMessage(text=(
+                    "⚠️ 輸入格式錯誤，請重新填入以下資料（換行填寫）：\n\n"
+                    "姓名：\n電話：\n咖啡品名：\n樣式【掛耳包/豆子】：\n數量（數字）：\n取貨日期：\n取貨方式：\n備註（不可空）："
+                ))
             )
             return
-        # 暫存訂單資料
+
+        # 暫存訂單（尚未有付款方式）
+        # 我們存 dict 方便後續使用
         user_states[f"{user_id}_temp_order"] = data
         user_states[user_id] = "waiting_payment"
-        line_bot_api.reply_message(
-            event.reply_token,
-            TextSendMessage(text="請問付款方式是『匯款』還是『付現』？")
-        )
+        line_bot_api.reply_message(event.reply_token, TextSendMessage(text="請問付款方式為『匯款』或『付現』？（輸入即可）"))
         return
 
-    elif state == "waiting_payment":
-        payment_method = msg.strip()
-        if payment_method not in ["匯款", "付現"]:
-            line_bot_api.reply_message(
-                event.reply_token,
-                TextSendMessage(text="⚠️ 請輸入『匯款』或『付現』")
-            )
-            return
-
-        data = user_states.pop(f"{user_id}_temp_order")
-        data["payment"] = payment_method
-
-        order_time = (datetime.utcnow() + timedelta(hours=8)).strftime('%Y-%m-%d %H:%M')
-        order_id = str(uuid.uuid4())[:8]
-
-        # 寫入 Google Sheet（多了付款方式欄位）
-        sheet.append_row([
-            order_id, data['name'], data['phone'], data['coffee'], data['style'],
-            data['qty'], data['date'], data['method'], data['remark'], data['payment'],
-            order_time, user_id
-        ])
-
-        # 回覆付款資訊
-        if payment_method == "付現":
-            payment_text = "於取貨時交付，謝謝購買"
-        else:
-            payment_text = "💳 匯款資訊：\n銀行：XXX\n帳號：123456789\n戶名：XXX\n感謝購買"
-
-        reply_text = f"✅ 訂單已完成：{data['coffee']}-{data['style']}x{data['qty']}\n📌 訂單編號：{order_id}\n{payment_text}"
-
-        today_str = (datetime.utcnow() + timedelta(hours=8)).strftime('%Y-%m-%d')
-        if data['date'] == today_str:
-            reply_text += "\n⚠️ 溫馨提醒：您今天需取貨！"
-
-        reply_text += "\n\n❓是否還要繼續下單？請輸入『是』或『否』"
-
-        user_states[user_id] = "confirm_continue"
-        line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
-        return
-
-    elif state == "confirm_continue":
-        if msg == "是":
-            user_states[user_id] = "ordering"
-            line_bot_api.reply_message(
-                event.reply_token,
-                TextSendMessage(
-                    text="請再次輸入以下資料（換行填寫）\n\n"
-                         "姓名：\n電話：\n咖啡品名：\n樣式【掛耳包/豆子】：\n"
-                         "數量（數字）：\n取貨日期：\n取貨方式：\n備註："
-                )
-            )
-        else:
-            user_states[user_id] = "init"
-            line_bot_api.reply_message(event.reply_token, TextSendMessage(text="☕ 期待下次光臨！"))
-        return
-
-    elif state == "editing":
+    # ----- editing：由上而下搜尋訂單編號 -----
+    if state == "editing":
         query = msg
         records = sheet.get_all_values()
+        if not records or len(records) < 1:
+            line_bot_api.reply_message(event.reply_token, TextSendMessage(text="❌ 尚無訂單資料。"))
+            user_states[user_id] = "init"
+            return
         headers = records[0]
         found = False
 
-        # 從上而下搜尋
+        # 由上而下搜尋（跳過標題列）
         for idx in range(1, len(records)):
             row = records[idx]
-            if query == row[0]:
-                backup_sheet.append_row(row)  # 保留備註與付款方式
+            if len(row) >= 1 and query == row[0]:
+                # 備份該列到已取消訂單（保持欄位數）
+                # 確保 backup_sheet header 與主表一致
+                b_headers = backup_sheet.get_all_values()
+                if not b_headers or b_headers[0] != EXPECTED_HEADERS:
+                    backup_sheet.clear()
+                    backup_sheet.update([EXPECTED_HEADERS])
+                # 若該列長度不符 header 就補空
+                target_row = row[:]
+                if len(target_row) < len(EXPECTED_HEADERS):
+                    target_row += [""] * (len(EXPECTED_HEADERS) - len(target_row))
+                elif len(target_row) > len(EXPECTED_HEADERS):
+                    target_row = target_row[:len(EXPECTED_HEADERS)]
+                backup_sheet.append_row(target_row)
+                # 刪除主表該列（index 是 1-based，header 為第1列）
                 sheet.delete_rows(idx + 1)
+
                 user_states[user_id] = "confirm_reorder"
-                visible_fields = [f"{h}: {v}" for h, v in zip(headers, row) if h != "顧客編號" and v]
-                reply_text = "✅ 已清除以下訂單：\n" + "\n".join(visible_fields) + \
-                             "\n\n❓請問是否要重新下單？請輸入『是』或『否』"
+                visible_fields = [f"{h}: {v}" for h, v in zip(headers, target_row) if v]
+                reply_text = "✅ 已取消並備份以下訂單：\n" + "\n".join(visible_fields) + "\n\n❓是否要重新下單？請輸入『是』或『否』"
                 line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
                 found = True
                 break
@@ -202,171 +266,155 @@ def handle_message(event):
             line_bot_api.reply_message(event.reply_token, TextSendMessage(text="❌ 查無符合的訂單編號，請再確認。"))
         return
 
-    elif state == "confirm_reorder":
+    # ----- confirm_reorder：取消後是否要重新下單 -----
+    if state == "confirm_reorder":
         if msg == "是":
             user_states[user_id] = "ordering"
             line_bot_api.reply_message(
                 event.reply_token,
-                TextSendMessage(
-                    text="請再次輸入以下資料（換行填寫）\n\n"
-                         "姓名：\n電話：\n咖啡品名：\n樣式【掛耳包/豆子】：\n"
-                         "數量（數字）：\n取貨日期：\n取貨方式：\n備註："
-                )
+                TextSendMessage(text=(
+                    "請再次輸入以下資料（換行填寫，備註不可空）：\n\n"
+                    "姓名：\n電話：\n咖啡品名：\n樣式：\n數量：\n取貨日期：\n取貨方式：\n備註："
+                ))
             )
         else:
             user_states[user_id] = "init"
             line_bot_api.reply_message(event.reply_token, TextSendMessage(text="☕ 期待下次光臨！"))
         return
 
-    else:
-        line_bot_api.reply_message(
-            event.reply_token,
-            TextSendMessage(text="👋 請輸入『下單』開始新訂單\n或輸入『編輯訂單』來變更您的訂單")
-        )
-        user_states[user_id] = "init"
+    # ----- confirm_continue：下單完成是否繼續（這裡用不到，因為我們在付款回覆後直接問） -----
+    if state == "confirm_continue":
+        if msg == "是":
+            user_states[user_id] = "ordering"
+            line_bot_api.reply_message(
+                event.reply_token,
+                TextSendMessage(text=(
+                    "請輸入資料（換行填寫，備註不可空）：\n\n"
+                    "姓名：\n電話：\n咖啡品名：\n樣式：\n數量：\n取貨日期：\n取貨方式：\n備註："
+                ))
+            )
+        else:
+            user_states[user_id] = "init"
+            line_bot_api.reply_message(event.reply_token, TextSendMessage(text="☕ 期待下次光臨！"))
+        return
 
-# 其他功能（提醒、金額更新、統計）維持不變
-# ⏰ 自動提醒任務
+    # ----- 其他（預設） -----
+    line_bot_api.reply_message(event.reply_token, TextSendMessage(text="👋 請輸入『下單』開始新訂單，或輸入『編輯訂單』來取消訂單"))
+    user_states[user_id] = "init"
+    return
+
+# ---------- 定時任務（提醒 / 更新 / 統計） ----------
 def daily_pickup_reminder():
-    records = sheet.get_all_values()
-    today_str = (datetime.utcnow() + timedelta(hours=8)).strftime('%Y-%m-%d')
-    for row in records[1:]:
-        try:
-            pickup_date = row[6]
-            user_id = row[9]
-            if pickup_date == today_str:
-                coffee = row[3]
-                qty = row[5]
-                msg = f"📦 溫馨提醒：您今天有咖啡訂單要取貨！（{coffee} x{qty}）"
-                line_bot_api.push_message(user_id, TextSendMessage(text=msg))
-        except IndexError:
-            continue
-
-# 自動填上訂單金額
-def update_prices_and_totals():
     try:
-        # 抓取訂單清單和價格表
-        order_ws = client.open("coffee_orders").worksheet("訂單清單")
-        price_ws = client.open("coffee_orders").worksheet("價格表")
+        records = sheet.get_all_values()
+        if not records or len(records) < 2:
+            return
+        today_str = (datetime.utcnow() + timedelta(hours=8)).strftime('%Y-%m-%d')
+        # 預計取貨日期欄位 index 根據 EXPECTED_HEADERS
+        idx_pickup = EXPECTED_HEADERS.index("預計取貨日期")
+        idx_name = EXPECTED_HEADERS.index("姓名")
+        idx_coffee = EXPECTED_HEADERS.index("咖啡名稱")
+        idx_qty = EXPECTED_HEADERS.index("數量")
+        idx_userid = EXPECTED_HEADERS.index("顧客編號")
+        for row in records[1:]:
+            try:
+                pickup_date = row[idx_pickup] if len(row) > idx_pickup else ""
+                user_id = row[idx_userid] if len(row) > idx_userid else ""
+                if pickup_date == today_str and user_id:
+                    coffee = row[idx_coffee] if len(row) > idx_coffee else ""
+                    qty = row[idx_qty] if len(row) > idx_qty else ""
+                    msg = f"📦 溫馨提醒：您今天有咖啡訂單要取貨！（{coffee} x{qty}）"
+                    line_bot_api.push_message(user_id, TextSendMessage(text=msg))
+            except Exception:
+                continue
+    except Exception:
+        return
 
+def update_prices_and_totals():
+    # 保持原先邏輯，但須確保 price worksheet 欄位名稱與你現有一致
+    try:
+        order_ws = client.open(SPREADSHEET_NAME).worksheet("訂單清單")
+        price_ws = client.open(SPREADSHEET_NAME).worksheet("價格表")
         order_data = order_ws.get_all_values()
         price_data = price_ws.get_all_values()
-
+        if len(order_data) < 2 or len(price_data) < 2:
+            return
         order_df = pd.DataFrame(order_data[1:], columns=order_data[0])
         price_df = pd.DataFrame(price_data[1:], columns=price_data[0])
-
-        # 移除空白列（若有）
         order_df = order_df[order_df["咖啡名稱"].notna()]
         price_df = price_df[price_df["咖啡名稱"].notna()]
-
-        # 數量轉成數字
         order_df["數量"] = pd.to_numeric(order_df["數量"], errors='coerce')
-
-        # 合併訂單與價格
         merged_df = order_df.merge(price_df, how="left", on=["咖啡名稱", "掛耳包/豆子"], suffixes=('', '_價格'))
-
-        # 若原表中已有「單價」「總金額」欄位則覆蓋，沒有則新增
-        merged_df["單價"] = pd.to_numeric(merged_df["單價_價格"], errors='coerce')
+        merged_df["單價"] = pd.to_numeric(merged_df.get("單價_價格", pd.Series()), errors='coerce')
         merged_df["總金額"] = merged_df["單價"] * merged_df["數量"]
-
-        # 清理欄位順序（確保與原始順序一致）
         final_columns = order_data[0]
         for col in ["單價", "總金額"]:
             if col not in final_columns:
                 final_columns.append(col)
-
-        # 依照欄位順序重新整理 DataFrame
         merged_df = merged_df.reindex(columns=final_columns)
-
-        # 更新 Google Sheet（含標題列）
-        order_ws.update([final_columns] + merged_df.astype(str).values.tolist())
-
-        print("✅ 價格與總金額更新完成")
+        order_ws.update([final_columns] + merged_df.fillna("").astype(str).values.tolist())
     except Exception as e:
-        print(f"❌ 更新價格時發生錯誤：{e}")
+        print("更新價格時錯誤：", e)
 
-# 月報表
 def generate_monthly_summary():
     try:
-        order_ws = client.open("coffee_orders").worksheet("訂單清單")
-
+        order_ws = client.open(SPREADSHEET_NAME).worksheet("訂單清單")
         order_data = order_ws.get_all_values()
+        if len(order_data) < 2:
+            return
         order_df = pd.DataFrame(order_data[1:], columns=order_data[0])
-
-        # 確保資料正確型別
         order_df["數量"] = pd.to_numeric(order_df["數量"], errors="coerce").fillna(0)
-        order_df["單價"] = pd.to_numeric(order_df["單價"], errors="coerce").fillna(0)
-        order_df["總金額"] = pd.to_numeric(order_df["總金額"], errors="coerce").fillna(0)
-
-        # 擷取月份（預計取貨日期）
+        order_df["單價"] = pd.to_numeric(order_df.get("單價", 0), errors="coerce").fillna(0)
+        order_df["總金額"] = pd.to_numeric(order_df.get("總金額", 0), errors="coerce").fillna(0)
         order_df["月份"] = pd.to_datetime(order_df["預計取貨日期"], errors="coerce").dt.to_period("M").astype(str)
-
-        # 群組統計
         summary_df = order_df.groupby(["月份", "咖啡名稱", "掛耳包/豆子", "單價"], as_index=False).agg({
             "數量": "sum",
             "總金額": "sum"
         })
-
-        # 欄位排序
         summary_df = summary_df[["月份", "咖啡名稱", "掛耳包/豆子", "單價", "數量", "總金額"]]
-
-        # 建立 / 更新「每月統計」工作表
         try:
-            summary_ws = client.open("coffee_orders").worksheet("每月統計")
+            summary_ws = client.open(SPREADSHEET_NAME).worksheet("每月統計")
         except:
-            summary_ws = client.open("coffee_orders").add_worksheet(title="每月統計", rows="1000", cols="10")
-
-        # 寫入統計資料
+            summary_ws = client.open(SPREADSHEET_NAME).add_worksheet(title="每月統計", rows="1000", cols="10")
         summary_ws.clear()
         summary_ws.update([summary_df.columns.tolist()] + summary_df.astype(str).values.tolist())
-
-        print("✅ 每月統計已更新")
     except Exception as e:
-        print(f"❌ 無法產生統計：{e}")
+        print("無法產生每月統計：", e)
 
-# 顧客購買分析
 def generate_customer_summary():
     try:
-        order_ws = client.open("coffee_orders").worksheet("訂單清單")
-
+        order_ws = client.open(SPREADSHEET_NAME).worksheet("訂單清單")
         order_data = order_ws.get_all_values()
+        if len(order_data) < 2:
+            return
         order_df = pd.DataFrame(order_data[1:], columns=order_data[0])
-
-        # 確保欄位格式正確
         order_df["數量"] = pd.to_numeric(order_df["數量"], errors="coerce").fillna(0)
-        order_df["總金額"] = pd.to_numeric(order_df["總金額"], errors="coerce").fillna(0)
-
-        # 統計：依姓名 + 咖啡名稱 + 樣式 群組
+        order_df["總金額"] = pd.to_numeric(order_df.get("總金額", 0), errors="coerce").fillna(0)
         customer_df = order_df.groupby(["姓名", "咖啡名稱", "掛耳包/豆子"], as_index=False).agg({
-            "數量": "count",    # 購買次數（筆數）
+            "數量": "count",
             "總金額": "sum"
         })
-
-        # 欄位名稱調整
         customer_df.rename(columns={"數量": "購買次數"}, inplace=True)
         customer_df = customer_df[["姓名", "咖啡名稱", "掛耳包/豆子", "購買次數", "總金額"]]
-
-        # 建立 / 更新「客群統計」工作表
         try:
-            customer_ws = client.open("coffee_orders").worksheet("客群統計")
+            customer_ws = client.open(SPREADSHEET_NAME).worksheet("客群統計")
         except:
-            customer_ws = client.open("coffee_orders").add_worksheet(title="客群統計", rows="1000", cols="10")
-
+            customer_ws = client.open(SPREADSHEET_NAME).add_worksheet(title="客群統計", rows="1000", cols="10")
         customer_ws.clear()
         customer_ws.update([customer_df.columns.tolist()] + customer_df.astype(str).values.tolist())
-
-        print("✅ 客群統計已更新")
     except Exception as e:
-        print(f"❌ 無法產生客群統計：{e}")
+        print("無法產生客群統計：", e)
 
-
-# 啟用每日排程（早上 8 點）
+# ---------- 啟用 scheduler（示範排程） ----------
 scheduler = BackgroundScheduler()
-scheduler.add_job(daily_pickup_reminder, 'cron', hour=8, minute=0)
-scheduler.add_job(update_prices_and_totals, 'interval', minutes=1)
-scheduler.add_job(generate_monthly_summary, 'date', run_date=datetime.now() + timedelta(seconds=10))
-scheduler.add_job(generate_customer_summary, 'date', run_date=datetime.now() + timedelta(seconds=15))
+# 每日提醒（每天觸發一次）
+scheduler.add_job(daily_pickup_reminder, 'interval', days=1)
+# 更新價格 / 總金額 (每 10 分鐘為例)
+scheduler.add_job(update_prices_and_totals, 'interval', minutes=10)
+# 每 12 小時產生統計
+scheduler.add_job(generate_monthly_summary, 'interval', hours=12)
+scheduler.add_job(generate_customer_summary, 'interval', hours=12)
 scheduler.start()
 
 if __name__ == "__main__":
-    app.run()
+    app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000)))
