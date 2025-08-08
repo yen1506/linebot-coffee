@@ -13,7 +13,6 @@ from apscheduler.schedulers.background import BackgroundScheduler
 
 app = Flask(__name__)
 
-
 # LINE API 設定
 LINE_CHANNEL_ACCESS_TOKEN = os.getenv('LINE_CHANNEL_ACCESS_TOKEN')
 LINE_CHANNEL_SECRET = os.getenv('LINE_CHANNEL_SECRET')
@@ -29,26 +28,30 @@ scope = [
 ]
 creds = ServiceAccountCredentials.from_json_keyfile_name("/etc/secrets/coffee-bot-468008-86e28eaa87f3.json", scope)
 client = gspread.authorize(creds)
-sheet = client.open("coffee_orders").sheet1
 
-# 建立備份工作表（若不存在會新增）
+# 主訂單表
+sheet = client.open("coffee_orders").worksheet("訂單清單")
+
+# 已取消訂單表
 try:
     backup_sheet = client.open("coffee_orders").worksheet("已取消訂單")
 except:
     backup_sheet = client.open("coffee_orders").add_worksheet(title="已取消訂單", rows="1000", cols="20")
 
-# 使用者狀態記憶（簡單版）
+# 使用者狀態記憶
 user_states = {}
 
-# 訂單解析
+# 訂單解析（不含付款方式）
 def parse_order_fields(text):
     parts = text.strip().split('\n')
-    if len(parts) != 7:
+    if len(parts) != 8:
         return None
-    name, phone, coffee, style, qty, date, method = parts
+    name, phone, coffee, style, qty, date, method, remark = parts
     if not re.match(r'^09\d{8}$', phone):
         return None
     if not qty.isdigit():
+        return None
+    if not remark.strip():
         return None
     return {
         "name": name.strip(),
@@ -56,8 +59,9 @@ def parse_order_fields(text):
         "coffee": coffee.strip(),
         "style": style.strip(),
         "qty": int(qty),
-        "date": date.strip(),
-        "method": method.strip()
+        "date": date.strip(),  # 不驗證格式
+        "method": method.strip(),
+        "remark": remark.strip()
     }
 
 @app.route("/callback", methods=['POST'])
@@ -80,7 +84,11 @@ def handle_message(event):
         user_states[user_id] = "ordering"
         line_bot_api.reply_message(
             event.reply_token,
-            TextSendMessage(text="請依序輸入以下資料（換行填寫，毋需複製名稱）\n\n姓名：\n電話：\n咖啡品名【請先確認現有販售品項】：\n樣式【掛耳包/豆子】：\n數量【填入阿拉伯數字】：\n取貨日期【格式：YYYYMMDD】：\n取貨方式【面交或填入郵寄地址】：")
+            TextSendMessage(
+                text="請依序輸入以下資料（換行填寫）\n\n"
+                     "姓名：\n電話：\n咖啡品名：\n樣式【掛耳包/豆子】：\n"
+                     "數量（數字）：\n取貨日期：\n取貨方式：\n備註："
+            )
         )
         return
 
@@ -97,34 +105,56 @@ def handle_message(event):
         if not data:
             line_bot_api.reply_message(
                 event.reply_token,
-                TextSendMessage(text="⚠️ 輸入格式錯誤，請重新填入以下資料（換行填寫，毋需複製名稱）\n\n姓名：\n電話：\n咖啡品名【請先確認現有販售品項】：\n樣式【掛耳包/豆子】：\n數量【填入阿拉伯數字】：\n取貨日期【格式：YYYYMMDD】：\n取貨方式【面交或填入郵寄地址】：")
+                TextSendMessage(
+                    text="⚠️ 輸入格式錯誤，請重新填入以下資料（換行填寫）\n\n"
+                         "姓名：\n電話：\n咖啡品名：\n樣式【掛耳包/豆子】：\n"
+                         "數量（數字）：\n取貨日期：\n取貨方式：\n備註："
+                )
+            )
+            return
+        # 暫存訂單資料
+        user_states[f"{user_id}_temp_order"] = data
+        user_states[user_id] = "waiting_payment"
+        line_bot_api.reply_message(
+            event.reply_token,
+            TextSendMessage(text="請問付款方式是『匯款』還是『付現』？")
+        )
+        return
+
+    elif state == "waiting_payment":
+        payment_method = msg.strip()
+        if payment_method not in ["匯款", "付現"]:
+            line_bot_api.reply_message(
+                event.reply_token,
+                TextSendMessage(text="⚠️ 請輸入『匯款』或『付現』")
             )
             return
 
-        # 日期格式處理
-        try:
-            pickup_date = datetime.strptime(data['date'], "%Y%m%d")
-            formatted_pickup_date = pickup_date.strftime("%Y-%m-%d")
-        except ValueError:
-            line_bot_api.reply_message(
-                event.reply_token,
-                TextSendMessage(text="⚠️ 預計取貨日期格式錯誤，請輸入 8 位數格式（例如：20250810）")
-            )
-            return
+        data = user_states.pop(f"{user_id}_temp_order")
+        data["payment"] = payment_method
 
         order_time = (datetime.utcnow() + timedelta(hours=8)).strftime('%Y-%m-%d %H:%M')
         order_id = str(uuid.uuid4())[:8]
 
-        # 寫入 Google Sheet
+        # 寫入 Google Sheet（多了付款方式欄位）
         sheet.append_row([
             order_id, data['name'], data['phone'], data['coffee'], data['style'],
-            data['qty'], formatted_pickup_date, data['method'], order_time, user_id
+            data['qty'], data['date'], data['method'], data['remark'], data['payment'],
+            order_time, user_id
         ])
 
-        reply_text = f"✅ 訂單已完成：{data['coffee']}-{data['style']}x{data['qty']}\n📌 訂單編號：{order_id}"
+        # 回覆付款資訊
+        if payment_method == "付現":
+            payment_text = "於取貨時交付，謝謝購買"
+        else:
+            payment_text = "💳 匯款資訊：\n銀行：XXX\n帳號：123456789\n戶名：XXX\n感謝購買"
+
+        reply_text = f"✅ 訂單已完成：{data['coffee']}-{data['style']}x{data['qty']}\n📌 訂單編號：{order_id}\n{payment_text}"
+
         today_str = (datetime.utcnow() + timedelta(hours=8)).strftime('%Y-%m-%d')
-        if formatted_pickup_date == today_str:
+        if data['date'] == today_str:
             reply_text += "\n⚠️ 溫馨提醒：您今天需取貨！"
+
         reply_text += "\n\n❓是否還要繼續下單？請輸入『是』或『否』"
 
         user_states[user_id] = "confirm_continue"
@@ -136,7 +166,11 @@ def handle_message(event):
             user_states[user_id] = "ordering"
             line_bot_api.reply_message(
                 event.reply_token,
-                TextSendMessage(text="請再次輸入以下資料（換行填寫，毋需複製名稱）\n\n姓名：\n電話：\n咖啡品名【請先確認現有販售品項】：\n樣式【掛耳包/豆子】：\n數量【填入阿拉伯數字】：\n取貨日期【格式：YYYYMMDD】：\n取貨方式【面交或填入郵寄地址】：")
+                TextSendMessage(
+                    text="請再次輸入以下資料（換行填寫）\n\n"
+                         "姓名：\n電話：\n咖啡品名：\n樣式【掛耳包/豆子】：\n"
+                         "數量（數字）：\n取貨日期：\n取貨方式：\n備註："
+                )
             )
         else:
             user_states[user_id] = "init"
@@ -149,19 +183,19 @@ def handle_message(event):
         headers = records[0]
         found = False
 
-        for idx in range(len(records) - 1, 0, -1):
+        # 從上而下搜尋
+        for idx in range(1, len(records)):
             row = records[idx]
             if query == row[0]:
-                backup_sheet.append_row(row)
+                backup_sheet.append_row(row)  # 保留備註與付款方式
                 sheet.delete_rows(idx + 1)
-
                 user_states[user_id] = "confirm_reorder"
                 visible_fields = [f"{h}: {v}" for h, v in zip(headers, row) if h != "顧客編號" and v]
                 reply_text = "✅ 已清除以下訂單：\n" + "\n".join(visible_fields) + \
                              "\n\n❓請問是否要重新下單？請輸入『是』或『否』"
                 line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
                 found = True
-                return
+                break
 
         if not found:
             user_states[user_id] = "init"
@@ -173,7 +207,11 @@ def handle_message(event):
             user_states[user_id] = "ordering"
             line_bot_api.reply_message(
                 event.reply_token,
-                TextSendMessage(text="請再次輸入以下資料（換行填寫，毋需複製名稱）\n\n姓名：\n電話：\n咖啡品名【請先確認現有販售品項】：\n樣式【掛耳包/豆子】：\n數量【填入阿拉伯數字】：\n取貨日期【格式：YYYYMMDD】：\n取貨方式【面交或填入郵寄地址】：")
+                TextSendMessage(
+                    text="請再次輸入以下資料（換行填寫）\n\n"
+                         "姓名：\n電話：\n咖啡品名：\n樣式【掛耳包/豆子】：\n"
+                         "數量（數字）：\n取貨日期：\n取貨方式：\n備註："
+                )
             )
         else:
             user_states[user_id] = "init"
@@ -187,6 +225,7 @@ def handle_message(event):
         )
         user_states[user_id] = "init"
 
+# 其他功能（提醒、金額更新、統計）維持不變
 # ⏰ 自動提醒任務
 def daily_pickup_reminder():
     records = sheet.get_all_values()
