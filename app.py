@@ -175,7 +175,7 @@ def handle_message(event):
                         "戶名：示範戶名\n\n"
                         "感謝購買！")
             reply_messages = [
-                TextSendMessage(text=f"✅ 訂單已完成：{temp['coffee']} x{temp['qty']}\n📌 訂單編號：{order_id}"),
+                TextSendMessage(text=f"✅ 訂單已完成：{temp['coffee']} - {temp['style']}x{temp['qty']}\n📌 訂單編號：{order_id}"),
                 TextSendMessage(text=bank_info)
             ]
             line_bot_api.reply_message(event.reply_token, reply_messages)
@@ -257,8 +257,8 @@ def handle_message(event):
                 sheet.delete_rows(idx + 1)
 
                 user_states[user_id] = "confirm_reorder"
-                visible_fields = [f"{h}: {v}" for h, v in zip(headers, target_row) if v]
-                reply_text = "✅ 已取消並備份以下訂單：\n" + "\n".join(visible_fields) + "\n\n❓是否要重新下單？請輸入『是』或『否』"
+                visible_fields = [f"{h}: {v}" for h, v in zip(headers, target_row) if h != "顧客編號" and v]
+                reply_text = "✅ 已取消以下訂單：\n" + "\n".join(visible_fields) + "\n\n❓是否要重新下單？請輸入『是』或『否』"
                 line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
                 found = True
                 break
