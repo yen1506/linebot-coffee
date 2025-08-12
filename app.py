@@ -87,7 +87,7 @@ def parse_order_fields(text):
         "coffee": data_dict.get("咖啡品名", ""),
         "style": data_dict.get("樣式", ""),
         "qty": int(data_dict.get("數量", "0")),
-        "method": data_dict.get("送達地址", ""),
+        "address": data_dict.get("送達地址", ""),
         "remark": data_dict.get("備註", "") if data_dict.get("備註") else ""
     }
 
@@ -132,11 +132,11 @@ def handle_message(event):
             "訂單編號": order_id,
             "姓名": temp["name"],
             "電話": temp["phone"],
-            "咖啡品名: temp["coffee"],
+            "咖啡品名": temp["coffee"],
             "付款方式": payment_method,
             "樣式": temp["style"],
             "數量": str(temp["qty"]),
-            "送達地址": temp["method"],
+            "送達地址": temp["address"],
             "備註": temp["remark"],
             "下單時間": order_time,
             "顧客編號": user_id
@@ -156,7 +156,7 @@ def handle_message(event):
             f"【咖啡品名】：{temp['coffee']}\n"
             f"【樣式】：{temp['style']}\n"
             f"【數量】：{temp['qty']}\n"
-            f"【送達地址】：{temp['method']}\n"
+            f"【送達地址】：{temp['address']}\n"
             f"【備註】：{temp['remark'] if temp['remark'] else '無'}\n"
             f"【付款方式】：{payment_method}"
         )
@@ -297,7 +297,7 @@ def handle_message(event):
             "付款方式": original_data[headers.index("付款方式")],
             "樣式": new_data["style"],
             "數量": str(new_data["qty"]),
-            "送達地址": new_data["method"],
+            "送達地址": new_data["address"],
             "備註": new_data["remark"],
             "下單時間": original_data[headers.index("下單時間")],
             "顧客編號": user_id
@@ -315,7 +315,7 @@ def handle_message(event):
                 f"【咖啡品名】：{new_data['coffee']}\n"
                 f"【樣式】：{new_data['style']}\n"
                 f"【數量】：{new_data['qty']}\n"
-                f"【送達地址】：{new_data['method']}\n"
+                f"【送達地址】：{new_data['address']}\n"
                 f"【備註】：{new_data['remark'] if new_data['remark'] else '無'}"
             )
             line_bot_api.reply_message(event.reply_token, TextSendMessage(text="✅ 訂單已成功修改！\n以下是修改後的訂單資訊：\n---\n" + data_display))
@@ -394,7 +394,7 @@ def handle_message(event):
             f"【咖啡品名】：{data['coffee']}\n"
             f"【樣式】：{data['style']}\n"
             f"【數量】：{data['qty']}\n"
-            f"【送達地址】：{data['method']}\n"
+            f"【送達地址】：{data['address']}\n"
             f"【備註】：{data['remark'] if data['remark'] else '無'}"
         )
         
