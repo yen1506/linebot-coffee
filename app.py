@@ -301,7 +301,7 @@ def handle_message(event):
                 data_for_copy = []
                 for h_i, h in enumerate(headers):
                     # 只取我們關心的欄位供複製，跳過不可修改的欄位（訂單編號/顧客編號/下單時間）
-                    if h in ("訂單編號","付款方式","狀態","顧客編號","下單時間"):
+                    if h in ("訂單編號","付款方式","狀態","顧客編號","下單時間","單價","總金額"):
                         continue
                     v = row[h_i] if h_i < len(row) else ""
                     data_for_copy.append(f"{h}：{v}")
@@ -600,9 +600,9 @@ def generate_customer_summary():
 
 # ---------- 啟用 scheduler（示範排程） ----------
 scheduler = BackgroundScheduler()
-scheduler.add_job(update_prices_and_totals, 'interval', minutes=1)
-scheduler.add_job(generate_monthly_summary, 'interval', minutes=1)
-scheduler.add_job(generate_customer_summary, 'interval', minutes=1)
+scheduler.add_job(update_prices_and_totals, 'interval', minutes=10)
+scheduler.add_job(generate_monthly_summary, 'interval', hours=24)
+scheduler.add_job(generate_customer_summary, 'interval', hours=24)
 scheduler.start()
 
 if __name__ == "__main__":
