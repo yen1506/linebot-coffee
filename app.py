@@ -34,7 +34,7 @@ SPREADSHEET_NAME = "coffee_orders"
 
 # 預期欄位順序（移除預計取貨日期）
 EXPECTED_HEADERS = [
-    "訂單編號", "姓名", "電話", "咖啡名稱", "付款方式",
+    "訂單編號", "姓名", "電話", "咖啡品名", "付款方式",
     "樣式", "數量", "送達地址", "備註",
     "下單時間", "顧客編號"
 ]
@@ -132,7 +132,7 @@ def handle_message(event):
             "訂單編號": order_id,
             "姓名": temp["name"],
             "電話": temp["phone"],
-            "咖啡名稱": temp["coffee"],
+            "咖啡品名: temp["coffee"],
             "付款方式": payment_method,
             "樣式": temp["style"],
             "數量": str(temp["qty"]),
@@ -153,7 +153,7 @@ def handle_message(event):
             f"【訂單編號】：{order_id}\n"
             f"【姓名】：{temp['name']}\n"
             f"【電話】：{temp['phone']}\n"
-            f"【咖啡名稱】：{temp['coffee']}\n"
+            f"【咖啡品名】：{temp['coffee']}\n"
             f"【樣式】：{temp['style']}\n"
             f"【數量】：{temp['qty']}\n"
             f"【送達地址】：{temp['method']}\n"
@@ -230,7 +230,7 @@ def handle_message(event):
                 data_for_copy = (
                     f"姓名：{row[headers.index('姓名')]}\n"
                     f"電話：{row[headers.index('電話')]}\n"
-                    f"咖啡品名：{row[headers.index('咖啡名稱')]}\n"
+                    f"咖啡品名：{row[headers.index('咖啡品名')]}\n"
                     f"樣式：{row[headers.index('樣式')]}\n"
                     f"數量：{row[headers.index('數量')]}\n"
                     f"送達地址：{row[headers.index('送達地址')]}\n"
@@ -293,7 +293,7 @@ def handle_message(event):
             "訂單編號": order_id,
             "姓名": new_data["name"],
             "電話": new_data["phone"],
-            "咖啡名稱": new_data["coffee"],
+            "咖啡品名": new_data["coffee"],
             "付款方式": original_data[headers.index("付款方式")],
             "樣式": new_data["style"],
             "數量": str(new_data["qty"]),
@@ -312,7 +312,7 @@ def handle_message(event):
                 f"【訂單編號】：{order_id}\n"
                 f"【姓名】：{new_data['name']}\n"
                 f"【電話】：{new_data['phone']}\n"
-                f"【咖啡名稱】：{new_data['coffee']}\n"
+                f"【咖啡品名】：{new_data['coffee']}\n"
                 f"【樣式】：{new_data['style']}\n"
                 f"【數量】：{new_data['qty']}\n"
                 f"【送達地址】：{new_data['method']}\n"
@@ -422,10 +422,10 @@ def update_prices_and_totals():
             return
         order_df = pd.DataFrame(order_data[1:], columns=order_data[0])
         price_df = pd.DataFrame(price_data[1:], columns=price_data[0])
-        order_df = order_df[order_df["咖啡名稱"].notna()]
-        price_df = price_df[price_df["咖啡名稱"].notna()]
+        order_df = order_df[order_df["咖啡品名"].notna()]
+        price_df = price_df[price_df["咖啡品名"].notna()]
         order_df["數量"] = pd.to_numeric(order_df["數量"], errors='coerce')
-        merged_df = order_df.merge(price_df, how="left", on=["咖啡名稱", "樣式"], suffixes=('', '_價格'))
+        merged_df = order_df.merge(price_df, how="left", on=["咖啡品名", "樣式"], suffixes=('', '_價格'))
         merged_df["單價"] = pd.to_numeric(merged_df.get("單價_價格", pd.Series()), errors='coerce')
         merged_df["總金額"] = merged_df["單價"] * merged_df["數量"]
         final_columns = order_data[0]
@@ -450,11 +450,11 @@ def generate_monthly_summary():
         
         order_df["月份"] = pd.to_datetime(order_df["下單時間"], errors="coerce").dt.to_period("M").astype(str)
         
-        summary_df = order_df.groupby(["月份", "咖啡名稱", "樣式", "單價"], as_index=False).agg({
+        summary_df = order_df.groupby(["月份", "咖啡品名", "樣式", "單價"], as_index=False).agg({
             "數量": "sum",
             "總金額": "sum"
         })
-        summary_df = summary_df[["月份", "咖啡名稱", "樣式", "單價", "數量", "總金額"]]
+        summary_df = summary_df[["月份", "咖啡品名", "樣式", "單價", "數量", "總金額"]]
         try:
             summary_ws = client.open(SPREADSHEET_NAME).worksheet("每月統計")
         except:
@@ -473,12 +473,12 @@ def generate_customer_summary():
         order_df = pd.DataFrame(order_data[1:], columns=order_data[0])
         order_df["數量"] = pd.to_numeric(order_df["數量"], errors="coerce").fillna(0)
         order_df["總金額"] = pd.to_numeric(order_df.get("總金額", 0), errors="coerce").fillna(0)
-        customer_df = order_df.groupby(["姓名", "咖啡名稱", "樣式"], as_index=False).agg({
+        customer_df = order_df.groupby(["姓名", "咖啡品名", "樣式"], as_index=False).agg({
             "數量": "count",
             "總金額": "sum"
         })
         customer_df.rename(columns={"數量": "購買次數"}, inplace=True)
-        customer_df = customer_df[["姓名", "咖啡名稱", "樣式", "購買次數", "總金額"]]
+        customer_df = customer_df[["姓名", "咖啡品名", "樣式", "購買次數", "總金額"]]
         try:
             customer_ws = client.open(SPREADSHEET_NAME).worksheet("客群統計")
         except:
