@@ -247,7 +247,7 @@ def handle_message(event):
                     found = True
 
                     visible_fields = [f"【{h}】：{v}" for h, v in zip(headers, row) if h not in  ("顧客編號","狀態") and v]
-                    reply_text = "✅ 已為您刪除以下訂單：\n---\n" + "\n".join(visible_fields) + "\n---\n若有訂購需求請再進行下單，感謝您!\n"
+                    reply_text = "✅ 已為您刪除以下訂單：\n---\n" + "\n".join(visible_fields) + "\n---\n若有訂購需求請再進行下單，感謝您!"
                     line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
                 except Exception as e:
                     line_bot_api.reply_message(event.reply_token, TextSendMessage(text=f"⚠️ 刪除訂單時發生錯誤，請稍後再試。錯誤：{e}"))
@@ -515,7 +515,7 @@ def handle_message(event):
         return
 
     # ----- 其他（預設） -----
-    line_bot_api.reply_message(event.reply_token, TextSendMessage(text="👋 您好，請依以下動作進行操作：\n輸入『下單』開始新訂單\n輸入『查詢訂單』來查詢現有訂單\n輸入『刪除訂單』來處理現有訂單\n輸入『修改訂單』來編輯現有訂單"))
+    line_bot_api.reply_message(event.reply_token, TextSendMessage(text="👋 您好，請依以下動作進行操作：\n『下單』---開始新訂單\n『查詢訂單』---查詢現有訂單\n『刪除訂單』---刪除現有訂單\n『修改訂單』---編輯現有訂單"))
     user_states[user_id] = "init"
     return
 
@@ -600,9 +600,9 @@ def generate_customer_summary():
 
 # ---------- 啟用 scheduler（示範排程） ----------
 scheduler = BackgroundScheduler()
-scheduler.add_job(update_prices_and_totals, 'interval', minutes=30)
-scheduler.add_job(generate_monthly_summary, 'interval', hours=12)
-scheduler.add_job(generate_customer_summary, 'interval', hours=24)
+scheduler.add_job(update_prices_and_totals, 'interval', minutes=1)
+scheduler.add_job(generate_monthly_summary, 'interval', minutes=1)
+scheduler.add_job(generate_customer_summary, 'interval', minutes=1)
 scheduler.start()
 
 if __name__ == "__main__":
