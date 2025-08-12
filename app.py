@@ -201,7 +201,7 @@ def handle_message(event):
             f"【狀態】：處理中"
         )
 
-        reply_messages = [TextSendMessage(text="✅ 訂單已成立！\n以下是您的訂單資訊：\n---\n" + data_display)]
+        reply_messages = [TextSendMessage(text="✅ 訂單已成立！\n以下是您的訂單資訊：\n---\n" + data_display + "\n---\n訂單將於3日內出貨，再麻煩您留意到貨通知。\n感謝您的訂購!")]
         if payment_method == "匯款":
             bank_info = ("💳 匯款資訊：\n銀行：示範銀行\n帳號：1234567890123\n戶名：示範戶名")
             reply_messages.append(TextSendMessage(text=bank_info))
@@ -287,7 +287,7 @@ def handle_message(event):
                 try:
                     t_idx = headers.index("下單時間")
                     if len(row) > t_idx and row[t_idx] and "已修改" in str(row[t_idx]):
-                        line_bot_api.reply_message(event.reply_token, TextSendMessage(text=f"❌ 訂單 {query} 只能修改一次，無法再次修改。"))
+                        line_bot_api.reply_message(event.reply_token, TextSendMessage(text=f"❌ 訂單 {query} 只能修改一次，無法再次修改。\n請刪除該訂單後再重新下單。"))
                         user_states.pop(user_id, None)
                         return
                 except ValueError:
@@ -308,8 +308,8 @@ def handle_message(event):
                 data_for_copy_text = "\n".join(data_for_copy)
 
                 instruction_text = (
-                    f"📝 訂單編號： {query}，請複製下方原訂單資料後直接修改並回傳（一次貼回全部或只改需要的欄位皆可）。\n\n"
-                    "註：\n咖啡品名請於基本檔案頁面先確認現有販售品項\n樣式掛耳包/豆子 擇一填寫\n送達地址 宅配地址/花蓮吉安地區可面交\n備註 選填\n"
+                    f"📝 訂單編號： {query}，請複製下方原訂單資料後直接修改並回傳。\n\n"
+                    "註：\n【咖啡品名】請於基本檔案頁面先確認現有販售品項\n【樣式】掛耳包/豆子 擇一填寫\n【送達地址】宅配地址/花蓮吉安地區可面交\n【備註】 選填"
                 )
                 line_bot_api.reply_message(event.reply_token, [
                     TextSendMessage(text=instruction_text),
@@ -374,7 +374,8 @@ def handle_message(event):
         if not new_data:
             instruction_text = (
                 "⚠️ 輸入格式錯誤，請重新參照各欄位說明並複製以下欄位進行修改：\n\n"
-                "例：\n姓名：王大明\n電話：0900123456\n咖啡品名：耶加雪菲\n樣式：掛耳包\n數量：2\n送達地址：台北市...\n備註：酸感多一點\n"
+                "例：\n姓名：王大明\n電話：0900123456\n咖啡品名：耶加雪菲\n樣式：掛耳包\n數量：2\n送達地址：台北市大安區羅斯福路四段1號\n備註：酸感多一點\n"
+                "註：\n【咖啡品名】請於基本檔案頁面先確認現有販售品項\n【樣式】掛耳包/豆子 擇一填寫\n【送達地址】宅配地址/花蓮吉安地區可面交\n【備註】 選填"
             )
             fields_text = (
                 "姓名：\n電話：\n咖啡品名：\n樣式：\n數量：\n送達地址：\n備註："
@@ -430,7 +431,7 @@ def handle_message(event):
                 f"【狀態】：{new_row_dict['狀態']}\n"
                 f"【下單時間】：{updated_time}"
             )
-            line_bot_api.reply_message(event.reply_token, TextSendMessage(text="✅ 訂單已成功修改！\n以下是修改後的訂單資訊：\n---\n" + data_display))
+            line_bot_api.reply_message(event.reply_token, TextSendMessage(text="✅ 訂單已成功修改！\n以下是修改後的訂單資訊：\n---\n" + data_display + "\n---\n訂單將於3日內出貨，再麻煩您留意到貨通知。\n感謝您的訂購!"))
         except Exception as e:
             line_bot_api.reply_message(event.reply_token, TextSendMessage(text=f"⚠️ 修改訂單時發生錯誤，請稍後再試。錯誤：{e}"))
 
@@ -443,8 +444,8 @@ def handle_message(event):
         user_states[user_id] = "ordering"
         instruction_text = (
             "請參照各欄位說明並複製以下欄位進行下單流程（回傳欄位：值 多行）：\n\n"
-            "例：\n姓名：王大明\n電話：0900123456\n咖啡品名：耶加雪菲\n樣式：掛耳包\n數量：2\n送達地址：台北市大安區...\n備註：酸感多一點\n\n"
-            "註：咖啡品名請於基本檔案頁面先確認現有販售品項；樣式掛耳包/豆子擇一；備註為選填"
+            "例：\n姓名：王大明\n電話：0900123456\n咖啡品名：耶加雪菲\n樣式：掛耳包\n數量：2\n送達地址：台北市大安區羅斯福路四段1號\n備註：酸感多一點\n\n"
+            "註：【咖啡品名】請於基本檔案頁面先確認現有販售品項\n【樣式】掛耳包/豆子 擇一填寫\n【送達地址】宅配地址/花蓮吉安地區可面交\n【備註】選填"
         )
         fields_text = (
             "姓名：\n電話：\n咖啡品名：\n樣式：\n數量：\n送達地址：\n備註："
@@ -476,7 +477,8 @@ def handle_message(event):
         if not data:
             instruction_text = (
                 "⚠️ 輸入格式錯誤，請重新參照各欄位說明並複製以下欄位進行下單流程：\n\n"
-                "例：\n姓名：王大明\n電話：0900123456\n咖啡品名：耶加雪菲\n樣式：掛耳包\n數量：2\n送達地址：台北市...\n備註：\n"
+                "例：\n姓名：王大明\n電話：0900123456\n咖啡品名：耶加雪菲\n樣式：掛耳包\n數量：2\n送達地址：台北市大安區羅斯福路四段1號\n備註：酸感多一點\n\n"
+                "註：【咖啡品名】請於基本檔案頁面先確認現有販售品項\n【樣式】掛耳包/豆子 擇一填寫\n【送達地址】宅配地址/花蓮吉安地區可面交\n【備註】選填"
             )
             fields_text = (
                 "姓名：\n電話：\n咖啡品名：\n樣式：\n數量：\n送達地址：\n備註："
@@ -601,4 +603,5 @@ scheduler.start()
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000)))
+
 
