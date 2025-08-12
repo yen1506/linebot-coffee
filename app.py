@@ -313,7 +313,7 @@ def handle_message(event):
 
                 data_for_copy = []
                 for h_i, h in enumerate(headers):
-                    if h in ("訂單編號","付款方式","狀態","顧客編號","下單時間"):
+                    if h in ("訂單編號","付款方式","狀態","顧客編號","下單時間","單價","總金額"):
                         continue
                     v = row[h_i] if h_i < len(row) else ""
                     data_for_copy.append(f"{h}：{v}")
@@ -541,30 +541,30 @@ def handle_message(event):
     return
 
 # ---------- 定時任務（提醒 / 更新 / 統計） ----------
-def update_prices_and_totals():
-    try:
-        order_ws = client.open(SPREADSHEET_NAME).worksheet("訂單清單")
-        price_ws = client.open(SPREADSHEET_NAME).worksheet("價格表")
-        order_data = order_ws.get_all_values()
-        price_data = price_ws.get_all_values()
-        if len(order_data) < 2 or len(price_data) < 2:
-            return
-        order_df = pd.DataFrame(order_data[1:], columns=order_data[0])
-        price_df = pd.DataFrame(price_data[1:], columns=price_data[0])
-        order_df = order_df[order_df["咖啡品名"].notna()]
-        price_df = price_df[price_df["咖啡品名"].notna()]
-        order_df["數量"] = pd.to_numeric(order_df["數量"], errors='coerce')
-        merged_df = order_df.merge(price_df, how="left", on=["咖啡品名", "樣式"], suffixes=('', '_價格'))
-        merged_df["單價"] = pd.to_numeric(merged_df.get("單價_價格", pd.Series()), errors='coerce')
-        merged_df["總金額"] = merged_df["單價"] * merged_df["數量"]
-        final_columns = order_data[0]
-        for col in ["單價", "總金額"]:
-            if col not in final_columns:
-                final_columns.append(col)
-        merged_df = merged_df.reindex(columns=final_columns)
-        order_ws.update([final_columns] + merged_df.fillna("").astype(str).values.tolist())
-    except Exception as e:
-        print("更新價格時錯誤：", e)
+# def update_prices_and_totals():
+#     try:
+#         order_ws = client.open(SPREADSHEET_NAME).worksheet("訂單清單")
+#         price_ws = client.open(SPREADSHEET_NAME).worksheet("價格表")
+#         order_data = order_ws.get_all_values()
+#         price_data = price_ws.get_all_values()
+#         if len(order_data) < 2 or len(price_data) < 2:
+#             return
+#         order_df = pd.DataFrame(order_data[1:], columns=order_data[0])
+#         price_df = pd.DataFrame(price_data[1:], columns=price_data[0])
+#         order_df = order_df[order_df["咖啡品名"].notna()]
+#         price_df = price_df[price_df["咖啡品名"].notna()]
+#         order_df["數量"] = pd.to_numeric(order_df["數量"], errors='coerce')
+#         merged_df = order_df.merge(price_df, how="left", on=["咖啡品名", "樣式"], suffixes=('', '_價格'))
+#         merged_df["單價"] = pd.to_numeric(merged_df.get("單價_價格", pd.Series()), errors='coerce')
+#         merged_df["總金額"] = merged_df["單價"] * merged_df["數量"]
+#         final_columns = order_data[0]
+#         for col in ["單價", "總金額"]:
+#             if col not in final_columns:
+#                 final_columns.append(col)
+#         merged_df = merged_df.reindex(columns=final_columns)
+#         order_ws.update([final_columns] + merged_df.fillna("").astype(str).values.tolist())
+#     except Exception as e:
+#         print("更新價格時錯誤：", e)
 
 def generate_monthly_summary():
     try:
@@ -620,7 +620,7 @@ def generate_customer_summary():
 
 # ---------- 啟用 scheduler（示範排程） ----------
 scheduler = BackgroundScheduler()
-scheduler.add_job(update_prices_and_totals, 'interval', minutes=30)
+# scheduler.add_job(update_prices_and_totals, 'interval', minutes=30)
 scheduler.add_job(generate_monthly_summary, 'interval', hours=12)
 scheduler.add_job(generate_customer_summary, 'interval', hours=24)
 scheduler.start()
