@@ -246,7 +246,7 @@ def handle_message(event):
                     sheet.delete_rows(idx + 1)
                     found = True
 
-                    visible_fields = [f"【{h}】：{v}" for h, v in zip(headers, row) if h != "顧客編號" and v]
+                    visible_fields = [f"【{h}】：{v}" for h, v in zip(headers, row) if h not in  ("顧客編號","狀態") and v]
                     reply_text = "✅ 已為您刪除以下訂單：\n---\n" + "\n".join(visible_fields) + "\n---\n若有訂購需求請再進行下單，感謝您!\n"
                     line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
                 except Exception as e:
@@ -287,7 +287,7 @@ def handle_message(event):
                 try:
                     t_idx = headers.index("下單時間")
                     if len(row) > t_idx and row[t_idx] and "已修改" in str(row[t_idx]):
-                        line_bot_api.reply_message(event.reply_token, TextSendMessage(text=f"❌ 訂單 {query} 只能修改一次，無法再次修改。\n請刪除該訂單後再重新下單。"))
+                        line_bot_api.reply_message(event.reply_token, TextSendMessage(text=f"❌ 每筆訂單僅能修改壹次， 訂單{query}無法再次修改。\n請刪除該訂單後再重新下單。"))
                         user_states.pop(user_id, None)
                         return
                 except ValueError:
@@ -301,7 +301,7 @@ def handle_message(event):
                 data_for_copy = []
                 for h_i, h in enumerate(headers):
                     # 只取我們關心的欄位供複製，跳過不可修改的欄位（訂單編號/顧客編號/下單時間）
-                    if h in ("訂單編號","付款方式","顧客編號","下單時間"):
+                    if h in ("訂單編號","付款方式","狀態","顧客編號","下單時間"):
                         continue
                     v = row[h_i] if h_i < len(row) else ""
                     data_for_copy.append(f"{h}：{v}")
@@ -346,10 +346,12 @@ def handle_message(event):
                     f"📜 您的訂單詳情：\n---\n"
                     f"【訂單編號】：{row[headers.index('訂單編號')]}\n"
                     f"【姓名】：{row[headers.index('姓名')]}\n"
+                    f"【電話】：{row[headers.index('電話')]}\n"
                     f"【咖啡品名】：{row[headers.index('咖啡品名')]}\n"
                     f"【樣式】：{row[headers.index('樣式')]}\n"
                     f"【數量】：{row[headers.index('數量')]}\n"
                     f"【送達地址】：{row[headers.index('送達地址')]}\n"
+                    f"【備註】：{row[headers.index('備註')]}\n"
                     f"【付款方式】：{row[headers.index('付款方式')]}\n"
                     f"【狀態】：{row[headers.index('狀態')]}\n"
                     f"【下單時間】：{row[headers.index('下單時間')]}"
@@ -513,7 +515,7 @@ def handle_message(event):
         return
 
     # ----- 其他（預設） -----
-    line_bot_api.reply_message(event.reply_token, TextSendMessage(text="👋 您好，請依以下動作進行操作：\n輸入『下單』開始新訂單\n輸入『查詢訂單』來查詢現有訂單。\n輸入『刪除訂單』來處理現有訂單。\n輸入『修改訂單』來編輯現有訂單"))
+    line_bot_api.reply_message(event.reply_token, TextSendMessage(text="👋 您好，請依以下動作進行操作：\n輸入『下單』開始新訂單\n輸入『查詢訂單』來查詢現有訂單\n輸入『刪除訂單』來處理現有訂單\n輸入『修改訂單』來編輯現有訂單"))
     user_states[user_id] = "init"
     return
 
