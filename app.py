@@ -36,14 +36,14 @@ SPREADSHEET_NAME = "coffee_orders"
 EXPECTED_HEADERS = [
     "訂單編號", "姓名", "電話", "咖啡品名", "付款方式",
     "樣式", "數量", "送達地址", "備註", "狀態",
-    "下單時間", "顧客編號"
+    "下單時間", "顧客編號", "單價", "總金額"
 ]
 
 # 已取消訂單的預期欄位（多一個刪單時間）
 BACKUP_HEADERS = [
     "訂單編號", "姓名", "電話", "咖啡品名", "付款方式",
     "樣式", "數量", "送達地址", "備註", "狀態",
-    "下單時間", "顧客編號", "刪單時間"
+    "下單時間", "顧客編號", "刪單時間", "單價", "總金額"
 ]
 
 def get_or_create_ws(title, rows=1000, cols=20):
@@ -73,7 +73,7 @@ def normalize_key(k: str) -> str:
     if not k:
         return k
     k = k.strip()
-    k = re.sub(r'^[\[\【\[]+|[\]\】\]]+$', '', k)  # remove surrounding brackets if any
+    k = re.sub(r'^[\[\【\[]+|[\]\】\]]+$', '', k)
     k = k.strip()
     return k
 
@@ -94,13 +94,11 @@ def parse_order_fields(text):
     for part in text.strip().splitlines():
         if not part or part.strip() == "":
             continue
-        # 支援全形與半形冒號
         if "：" in part:
             raw_key, raw_val = part.split("：", 1)
         elif ":" in part:
             raw_key, raw_val = part.split(":", 1)
         else:
-            # 無冒號視為不合法該行，跳過
             continue
         key = normalize_key(raw_key)
         val = raw_val.strip()
@@ -113,7 +111,6 @@ def parse_order_fields(text):
     phone = data_dict.get("電話", "")
     qty = data_dict.get("數量", "")
 
-    # 電話格式驗證 (台灣手機 09xxxxxxxx)
     if not re.match(r'^09\d{8}$', phone):
         return None
     if not str(qty).isdigit():
@@ -140,6 +137,21 @@ def callback():
         abort(400)
     return 'OK'
 
+def get_price_info():
+    """從「價格表」工作表讀取單價資訊"""
+    try:
+        price_ws = client.open(SPREADSHEET_NAME).worksheet("價格表")
+        price_records = price_ws.get_all_records()
+        prices = {}
+        for record in price_records:
+            key = (record.get("咖啡品名"), record.get("樣式"))
+            prices[key] = int(record.get("單價", 0))
+        return prices
+    except Exception as e:
+        print(f"讀取價格表時發生錯誤: {e}")
+        return {}
+
+
 @handler.add(MessageEvent, message=TextMessage)
 def handle_message(event):
     user_id = event.source.user_id
@@ -164,6 +176,11 @@ def handle_message(event):
             line_bot_api.reply_message(event.reply_token, TextSendMessage(text="❌ 付款方式請輸入『匯款』或『付現』，請重新輸入。"))
             return
 
+        prices = get_price_info()
+        item_key = (temp["coffee"], temp["style"])
+        unit_price = prices.get(item_key, 0)
+        total_amount = unit_price * temp["qty"]
+
         order_id = str(uuid.uuid4())[:8]
         order_time = (datetime.utcnow() + timedelta(hours=8)).strftime('%Y-%m-%d %H:%M')
         row_dict = {
@@ -178,9 +195,11 @@ def handle_message(event):
             "備註": temp["remark"],
             "狀態": "處理中",
             "下單時間": order_time,
-            "顧客編號": user_id
+            "顧客編號": user_id,
+            "單價": str(unit_price),
+            "總金額": str(total_amount)
         }
-
+        
         try:
             row = [row_dict.get(h, "") for h in EXPECTED_HEADERS]
             sheet.append_row(row)
@@ -195,12 +214,14 @@ def handle_message(event):
             f"【咖啡品名】：{temp['coffee']}\n"
             f"【樣式】：{temp['style']}\n"
             f"【數量】：{temp['qty']}\n"
+            f"【單價】：{unit_price}\n"
+            f"【總金額】：{total_amount}\n"
             f"【送達地址】：{temp['address']}\n"
             f"【備註】：{temp['remark'] if temp['remark'] else '無'}\n"
             f"【付款方式】：{payment_method}\n"
             f"【狀態】：處理中"
         )
-
+        
         reply_messages = [TextSendMessage(text="✅ 訂單已成立！\n以下是您的訂單資訊：\n---\n" + data_display + "\n---\n訂單將於3日內出貨，再麻煩您留意到貨通知。\n感謝您的訂購!")]
         if payment_method == "匯款":
             bank_info = ("💳 匯款資訊：\n銀行：示範銀行\n帳號：1234567890123\n戶名：示範戶名")
@@ -225,28 +246,24 @@ def handle_message(event):
         for idx in range(1, len(records)):
             row = records[idx]
             if len(row) > 0 and query == row[0]:
-                # 檢查顧客身分
                 try:
                     cust_idx = headers.index("顧客編號")
                     if len(row) <= cust_idx or user_id != row[cust_idx]:
                         continue
                 except ValueError:
-                    # 若 header 沒有顧客編號，以保守方式拒絕
                     continue
 
                 try:
-                    # 準備備份資料，並新增刪單時間
                     delete_time = (datetime.utcnow() + timedelta(hours=8)).strftime('%Y-%m-%d %H:%M')
                     row_dict = {headers[i]: (row[i] if i < len(row) else "") for i in range(len(headers))}
                     row_dict["刪單時間"] = delete_time
-                    # 以 BACKUP_HEADERS 順序建立備份列
                     target_row = [row_dict.get(h, "") for h in BACKUP_HEADERS]
                     backup_sheet.append_row(target_row)
 
                     sheet.delete_rows(idx + 1)
                     found = True
 
-                    visible_fields = [f"【{h}】：{v}" for h, v in zip(headers, row) if h not in  ("顧客編號","狀態") and v]
+                    visible_fields = [f"【{h}】：{v}" for h, v in zip(headers, row) if h not in ("顧客編號","狀態") and v]
                     reply_text = "✅ 已為您刪除以下訂單：\n---\n" + "\n".join(visible_fields) + "\n---\n若有訂購需求請再進行下單，感謝您!"
                     line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
                 except Exception as e:
@@ -273,7 +290,6 @@ def handle_message(event):
         for idx in range(1, len(records)):
             row = records[idx]
             if len(row) > 0 and query == row[0]:
-                # 檢查是否為該使用者的訂單
                 try:
                     cust_idx = headers.index("顧客編號")
                     if len(row) <= cust_idx or user_id != row[cust_idx]:
@@ -283,7 +299,6 @@ def handle_message(event):
 
                 found = True
 
-                # 檢查是否已修改過（你原先限制只能修改一次）
                 try:
                     t_idx = headers.index("下單時間")
                     if len(row) > t_idx and row[t_idx] and "已修改" in str(row[t_idx]):
@@ -293,15 +308,12 @@ def handle_message(event):
                 except ValueError:
                     pass
 
-                # 儲存暫存資訊（儲存 row index 為 Google Sheets 的 1-based row）
                 user_states[user_id] = "modifying"
                 user_states[f"{user_id}_temp_modify"] = {"row_index": idx + 1, "order_id": query, "original_data": row}
 
-                # 準備要讓使用者複製修改的區塊（以欄位：值 的格式列出）
                 data_for_copy = []
                 for h_i, h in enumerate(headers):
-                    # 只取我們關心的欄位供複製，跳過不可修改的欄位（訂單編號/顧客編號/下單時間）
-                    if h in ("訂單編號","付款方式","狀態","顧客編號","下單時間","單價","總金額"):
+                    if h in ("訂單編號","付款方式","狀態","顧客編號","下單時間"):
                         continue
                     v = row[h_i] if h_i < len(row) else ""
                     data_for_copy.append(f"{h}：{v}")
@@ -342,6 +354,7 @@ def handle_message(event):
                 except ValueError:
                     continue
                 found = True
+
                 order_info = (
                     f"📜 您的訂單詳情：\n---\n"
                     f"【訂單編號】：{row[headers.index('訂單編號')]}\n"
@@ -350,6 +363,8 @@ def handle_message(event):
                     f"【咖啡品名】：{row[headers.index('咖啡品名')]}\n"
                     f"【樣式】：{row[headers.index('樣式')]}\n"
                     f"【數量】：{row[headers.index('數量')]}\n"
+                    f"【單價】：{row[headers.index('單價')]}\n"
+                    f"【總金額】：{row[headers.index('總金額')]}\n"
                     f"【送達地址】：{row[headers.index('送達地址')]}\n"
                     f"【備註】：{row[headers.index('備註')]}\n"
                     f"【付款方式】：{row[headers.index('付款方式')]}\n"
@@ -393,10 +408,13 @@ def handle_message(event):
         headers = sheet.get_all_values()[0]
         order_id = temp_modify['order_id']
         original_data = temp_modify['original_data']
-        # 標示已修改並保留時間
         updated_time = (datetime.utcnow() + timedelta(hours=8)).strftime('%Y-%m-%d %H:%M') + " (已修改)"
+        
+        prices = get_price_info()
+        item_key = (new_data["coffee"], new_data["style"])
+        unit_price = prices.get(item_key, 0)
+        total_amount = unit_price * new_data["qty"]
 
-        # 若付款方式不在新的輸入中，保留原付款方式
         try:
             payment = original_data[headers.index("付款方式")] if "付款方式" in headers and headers.index("付款方式") < len(original_data) else ""
         except Exception:
@@ -414,13 +432,14 @@ def handle_message(event):
             "備註": new_data["remark"],
             "狀態": original_data[headers.index("狀態")] if "狀態" in headers and headers.index("狀態") < len(original_data) else "",
             "下單時間": updated_time,
-            "顧客編號": user_id
+            "顧客編號": user_id,
+            "單價": str(unit_price),
+            "總金額": str(total_amount)
         }
 
         updated_row = [new_row_dict.get(h, "") for h in EXPECTED_HEADERS]
 
         try:
-            # 使用 A{row} 起始列寫入整列
             sheet.update(f"A{temp_modify['row_index']}", [updated_row])
             data_display = (
                 f"【訂單編號】：{order_id}\n"
@@ -430,6 +449,8 @@ def handle_message(event):
                 f"【付款方式】：{payment}\n"
                 f"【樣式】：{new_data['style']}\n"
                 f"【數量】：{new_data['qty']}\n"
+                f"【單價】：{unit_price}\n"
+                f"【總金額】：{total_amount}\n"
                 f"【送達地址】：{new_data['address']}\n"
                 f"【備註】：{new_data['remark'] if new_data['remark'] else '無'}\n"
                 f"【狀態】：{new_row_dict['狀態']}\n"
@@ -556,7 +577,6 @@ def generate_monthly_summary():
         order_df["單價"] = pd.to_numeric(order_df.get("單價", 0), errors="coerce").fillna(0)
         order_df["總金額"] = pd.to_numeric(order_df.get("總金額", 0), errors="coerce").fillna(0)
 
-        # 使用 pd.to_datetime 更健壯地解析「下單時間」，允許含 (已修改) 的字串
         raw_times = order_df.get("下單時間", "").astype(str).str.replace(r'\s*\(已修改\)\s*', '', regex=True)
         order_df["月份"] = pd.to_datetime(raw_times, errors="coerce").dt.to_period("M").astype(str)
 
@@ -600,8 +620,8 @@ def generate_customer_summary():
 
 # ---------- 啟用 scheduler（示範排程） ----------
 scheduler = BackgroundScheduler()
-scheduler.add_job(update_prices_and_totals, 'interval', minutes=10)
-scheduler.add_job(generate_monthly_summary, 'interval', hours=24)
+scheduler.add_job(update_prices_and_totals, 'interval', minutes=30)
+scheduler.add_job(generate_monthly_summary, 'interval', hours=12)
 scheduler.add_job(generate_customer_summary, 'interval', hours=24)
 scheduler.start()
 
