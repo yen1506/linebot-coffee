@@ -35,7 +35,7 @@ SPREADSHEET_NAME = "coffee_orders"
 # 預期欄位順序（移除預計取貨日期）
 EXPECTED_HEADERS = [
     "訂單編號", "姓名", "電話", "咖啡名稱", "付款方式",
-    "掛耳包/豆子", "數量", "取貨方式", "備註",
+    "樣式", "數量", "送達地址", "備註",
     "下單時間", "顧客編號"
 ]
 
@@ -73,7 +73,7 @@ def parse_order_fields(text):
             data_dict[key.strip()] = value.strip()
     
     # 檢查所有預期欄位是否存在
-    required_fields = ["姓名", "電話", "咖啡品名", "樣式", "數量", "取貨方式"]
+    required_fields = ["姓名", "電話", "咖啡品名", "樣式", "數量", "送達地址"]
     if not all(field in data_dict for field in required_fields):
         return None
     
@@ -87,7 +87,7 @@ def parse_order_fields(text):
         "coffee": data_dict.get("咖啡品名", ""),
         "style": data_dict.get("樣式", ""),
         "qty": int(data_dict.get("數量", "0")),
-        "method": data_dict.get("取貨方式", ""),
+        "method": data_dict.get("送達地址", ""),
         "remark": data_dict.get("備註", "") if data_dict.get("備註") else ""
     }
 
@@ -134,9 +134,9 @@ def handle_message(event):
             "電話": temp["phone"],
             "咖啡名稱": temp["coffee"],
             "付款方式": payment_method,
-            "掛耳包/豆子": temp["style"],
+            "樣式": temp["style"],
             "數量": str(temp["qty"]),
-            "取貨方式": temp["method"],
+            "送達地址": temp["method"],
             "備註": temp["remark"],
             "下單時間": order_time,
             "顧客編號": user_id
@@ -154,9 +154,9 @@ def handle_message(event):
             f"【姓名】：{temp['name']}\n"
             f"【電話】：{temp['phone']}\n"
             f"【咖啡名稱】：{temp['coffee']}\n"
-            f"【掛耳包/豆子】：{temp['style']}\n"
+            f"【樣式】：{temp['style']}\n"
             f"【數量】：{temp['qty']}\n"
-            f"【取貨方式】：{temp['method']}\n"
+            f"【送達地址】：{temp['method']}\n"
             f"【備註】：{temp['remark'] if temp['remark'] else '無'}\n"
             f"【付款方式】：{payment_method}"
         )
@@ -231,16 +231,15 @@ def handle_message(event):
                     f"姓名：{row[headers.index('姓名')]}\n"
                     f"電話：{row[headers.index('電話')]}\n"
                     f"咖啡品名：{row[headers.index('咖啡名稱')]}\n"
-                    f"樣式：{row[headers.index('掛耳包/豆子')]}\n"
+                    f"樣式：{row[headers.index('樣式')]}\n"
                     f"數量：{row[headers.index('數量')]}\n"
-                    f"取貨方式：{row[headers.index('取貨方式')]}\n"
+                    f"送達地址：{row[headers.index('送達地址')]}\n"
                     f"備註：{row[headers.index('備註')]}\n"
                 )
                 
                 instruction_text = (
-                    f"📝 找到訂單 {query}！請複製下方訂單資料後進行修改，並將修改後的內容回傳：\n\n"
-                    "【欄位名稱】：【使用者填入資料】\n"
-                    "註：\n樣式【掛耳包/豆子擇一填寫】\n數量【請填入阿拉伯數字】\n備註【可留空】"
+                    f"📝訂單編號： {query}！請複製下方原訂單資料後進行修改並回傳：\n\n" 
+                    "註：\n咖啡品名【請於基本檔案頁面先確認現有販售品項】\n樣式【掛耳包/豆子 擇一填寫】\n送達地址【宅配地址/花蓮吉安地區可面交】\n備註【選填】\n"
                 )
                 line_bot_api.reply_message(event.reply_token, [
                     TextSendMessage(text=instruction_text),
@@ -265,14 +264,23 @@ def handle_message(event):
         if not new_data:
             # 將指示說明與錯誤格式的資料分開
             instruction_text = (
-                "⚠️ 輸入格式錯誤，請重新輸入完整訂單資料（換行填寫）：\n\n"
-                "【欄位名稱】：【使用者填入資料】\n"
-                "姓名：\n電話：\n咖啡品名：\n樣式：\n數量：\n取貨方式：\n備註：\n\n"
-                "註：\n樣式【掛耳包/豆子擇一填寫】\n數量【請填入阿拉伯數字】\n備註【可留空】"
+                "⚠️ 輸入格式錯誤，請重新參照各欄位說明並複製以下欄位進行下單流程：\n\n"
+                "例：\n姓名：王大明\n電話：0900123456\n咖啡品名：耶加雪菲\n樣式：掛耳包\n數量：2\n送達地址：台北市大安區羅斯福路1號\n備註：酸感多一點\n\n"
+                "註：\n咖啡品名【請於基本檔案頁面先確認現有販售品項】\n樣式【掛耳包/豆子 擇一填寫】\n送達地址【宅配地址/花蓮吉安地區可面交】\n備註【選填】\n"
+            )
+            fields_text = (
+                "姓名：\n"
+                "電話：\n"
+                "咖啡品名：\n"
+                "樣式：\n"
+                "數量：\n"
+                "送達地址：\n"
+                "備註："
             )
             line_bot_api.reply_message(event.reply_token, [
                 TextSendMessage(text="❌ 格式錯誤！"),
-                TextSendMessage(text=instruction_text)
+                TextSendMessage(text=instruction_text),
+                TextSendMessage(text=fields_text)
             ])
             return
         
@@ -287,9 +295,9 @@ def handle_message(event):
             "電話": new_data["phone"],
             "咖啡名稱": new_data["coffee"],
             "付款方式": original_data[headers.index("付款方式")],
-            "掛耳包/豆子": new_data["style"],
+            "樣式": new_data["style"],
             "數量": str(new_data["qty"]),
-            "取貨方式": new_data["method"],
+            "送達地址": new_data["method"],
             "備註": new_data["remark"],
             "下單時間": original_data[headers.index("下單時間")],
             "顧客編號": user_id
@@ -305,9 +313,9 @@ def handle_message(event):
                 f"【姓名】：{new_data['name']}\n"
                 f"【電話】：{new_data['phone']}\n"
                 f"【咖啡名稱】：{new_data['coffee']}\n"
-                f"【掛耳包/豆子】：{new_data['style']}\n"
+                f"【樣式】：{new_data['style']}\n"
                 f"【數量】：{new_data['qty']}\n"
-                f"【取貨方式】：{new_data['method']}\n"
+                f"【送達地址】：{new_data['method']}\n"
                 f"【備註】：{new_data['remark'] if new_data['remark'] else '無'}"
             )
             line_bot_api.reply_message(event.reply_token, TextSendMessage(text="✅ 訂單已成功修改！\n以下是修改後的訂單資訊：\n---\n" + data_display))
@@ -322,8 +330,9 @@ def handle_message(event):
     if msg == "下單":
         user_states[user_id] = "ordering"
         instruction_text = (
-            "請依【欄位名稱】：【使用者填入資料】的格式，輸入以下資料（換行填寫）：\n\n"
-            "註：\n咖啡品名【請先確認現有販售品項】\n樣式【掛耳包/豆子擇一填寫】\n數量【請填入阿拉伯數字】\n取貨方式【宅配地址/花蓮吉安地區可面交】\n備註【可留空】"
+            "請參照各欄位說明並複製以下欄位進行下單流程：\n\n"
+            "例：\n姓名：王大明\n電話：0900123456\n咖啡品名：耶加雪菲\n樣式：掛耳包\n數量：2\n送達地址：台北市大安區羅斯福路1號\n備註：酸感多一點\n\n"
+            "註：\n咖啡品名【請於基本檔案頁面先確認現有販售品項】\n樣式【掛耳包/豆子 擇一填寫】\n送達地址【宅配地址/花蓮吉安地區可面交】\n備註【選填】\n"
         )
         fields_text = (
             "姓名：\n"
@@ -331,7 +340,7 @@ def handle_message(event):
             "咖啡品名：\n"
             "樣式：\n"
             "數量：\n"
-            "取貨方式：\n"
+            "送達地址：\n"
             "備註："
         )
         line_bot_api.reply_message(event.reply_token, [
@@ -355,9 +364,9 @@ def handle_message(event):
         data = parse_order_fields(msg)
         if not data:
             instruction_text = (
-                "⚠️ 輸入格式錯誤，請重新填入以下資料（換行填寫）：\n\n"
-                "【欄位名稱】：【使用者填入資料】\n"
-                "註：\n咖啡品名【請先確認現有販售品項】\n樣式【掛耳包/豆子擇一填寫】\n數量【請填入阿拉伯數字】\n取貨方式【宅配地址/花蓮吉安地區可面交】\n備註【可留空】"
+                "⚠️ 輸入格式錯誤，請重新參照各欄位說明並複製以下欄位進行下單流程：\n\n"
+                "例：\n姓名：王大明\n電話：0900123456\n咖啡品名：耶加雪菲\n樣式：掛耳包\n數量：2\n送達地址：台北市大安區羅斯福路1號\n備註：酸感多一點\n\n"
+                "註：\n咖啡品名【請於基本檔案頁面先確認現有販售品項】\n樣式【掛耳包/豆子 擇一填寫】\n送達地址【宅配地址/花蓮吉安地區可面交】\n備註【選填】\n"
             )
             fields_text = (
                 "姓名：\n"
@@ -365,7 +374,7 @@ def handle_message(event):
                 "咖啡品名：\n"
                 "樣式：\n"
                 "數量：\n"
-                "取貨方式：\n"
+                "送達地址：\n"
                 "備註："
             )
             line_bot_api.reply_message(event.reply_token, [
@@ -385,7 +394,7 @@ def handle_message(event):
             f"【咖啡品名】：{data['coffee']}\n"
             f"【樣式】：{data['style']}\n"
             f"【數量】：{data['qty']}\n"
-            f"【取貨方式】：{data['method']}\n"
+            f"【送達地址】：{data['method']}\n"
             f"【備註】：{data['remark'] if data['remark'] else '無'}"
         )
         
@@ -398,7 +407,7 @@ def handle_message(event):
         return
 
     # ----- 其他（預設） -----
-    line_bot_api.reply_message(event.reply_token, TextSendMessage(text="👋 請輸入『下單』開始新訂單，或輸入『刪除訂單』或『修改訂單』來處理現有訂單。"))
+    line_bot_api.reply_message(event.reply_token, TextSendMessage(text="👋 您好，請輸入『下單』開始新訂單，或輸入『刪除訂單』或『修改訂單』來處理現有訂單。"))
     user_states[user_id] = "init"
     return
 
@@ -416,7 +425,7 @@ def update_prices_and_totals():
         order_df = order_df[order_df["咖啡名稱"].notna()]
         price_df = price_df[price_df["咖啡名稱"].notna()]
         order_df["數量"] = pd.to_numeric(order_df["數量"], errors='coerce')
-        merged_df = order_df.merge(price_df, how="left", on=["咖啡名稱", "掛耳包/豆子"], suffixes=('', '_價格'))
+        merged_df = order_df.merge(price_df, how="left", on=["咖啡名稱", "樣式"], suffixes=('', '_價格'))
         merged_df["單價"] = pd.to_numeric(merged_df.get("單價_價格", pd.Series()), errors='coerce')
         merged_df["總金額"] = merged_df["單價"] * merged_df["數量"]
         final_columns = order_data[0]
@@ -441,11 +450,11 @@ def generate_monthly_summary():
         
         order_df["月份"] = pd.to_datetime(order_df["下單時間"], errors="coerce").dt.to_period("M").astype(str)
         
-        summary_df = order_df.groupby(["月份", "咖啡名稱", "掛耳包/豆子", "單價"], as_index=False).agg({
+        summary_df = order_df.groupby(["月份", "咖啡名稱", "樣式", "單價"], as_index=False).agg({
             "數量": "sum",
             "總金額": "sum"
         })
-        summary_df = summary_df[["月份", "咖啡名稱", "掛耳包/豆子", "單價", "數量", "總金額"]]
+        summary_df = summary_df[["月份", "咖啡名稱", "樣式", "單價", "數量", "總金額"]]
         try:
             summary_ws = client.open(SPREADSHEET_NAME).worksheet("每月統計")
         except:
@@ -464,12 +473,12 @@ def generate_customer_summary():
         order_df = pd.DataFrame(order_data[1:], columns=order_data[0])
         order_df["數量"] = pd.to_numeric(order_df["數量"], errors="coerce").fillna(0)
         order_df["總金額"] = pd.to_numeric(order_df.get("總金額", 0), errors="coerce").fillna(0)
-        customer_df = order_df.groupby(["姓名", "咖啡名稱", "掛耳包/豆子"], as_index=False).agg({
+        customer_df = order_df.groupby(["姓名", "咖啡名稱", "樣式"], as_index=False).agg({
             "數量": "count",
             "總金額": "sum"
         })
         customer_df.rename(columns={"數量": "購買次數"}, inplace=True)
-        customer_df = customer_df[["姓名", "咖啡名稱", "掛耳包/豆子", "購買次數", "總金額"]]
+        customer_df = customer_df[["姓名", "咖啡名稱", "樣式", "購買次數", "總金額"]]
         try:
             customer_ws = client.open(SPREADSHEET_NAME).worksheet("客群統計")
         except:
@@ -481,9 +490,9 @@ def generate_customer_summary():
 
 # ---------- 啟用 scheduler（示範排程） ----------
 scheduler = BackgroundScheduler()
-scheduler.add_job(update_prices_and_totals, 'interval', minutes=10)
-scheduler.add_job(generate_monthly_summary, 'interval', hours=12)
-scheduler.add_job(generate_customer_summary, 'interval', hours=12)
+scheduler.add_job(update_prices_and_totals, 'interval', minutes=1)
+scheduler.add_job(generate_monthly_summary, 'interval', minutes=1)
+scheduler.add_job(generate_customer_summary, 'interval', minutes=1)
 scheduler.start()
 
 if __name__ == "__main__":
